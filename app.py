@@ -145,7 +145,7 @@ def main():
     st.set_page_config(page_title="Pretor Group New Take-On", layout="wide")
     init_db()
     
-    st.title("🏢 Pretor Group: New Complex New Take-On")
+    st.title("🏢 Pretor Group: New Complex Take-On")
     
     # Sidebar Navigation
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings"]
@@ -292,4 +292,5 @@ def main():
     conn.close()
 
 if __name__ == "__main__":
+
     main()
