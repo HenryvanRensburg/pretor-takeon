@@ -475,7 +475,7 @@ def main():
                 c2.write(f"**Assistant:** {str(proj_row.get('Assistant Name',''))}\n{assistant_email}")
                 c3.write(f"**Bookkeeper:** {str(proj_row.get('Bookkeeper Name',''))}\n{bookkeeper_email}")
             
-            # Load Data
+            # Load Data (Cached)
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
             
@@ -495,7 +495,12 @@ def main():
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
-                    request_items = items_df['Task Name'].tolist()
+                    
+                    # UPDATED: Filter out items marked as Pretor Group responsibility
+                    # Default assumption: If it's not "Pretor Group", it's for the agent.
+                    request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
+                    request_items = request_df['Task Name'].tolist()
+                    
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
@@ -506,8 +511,11 @@ def main():
                             f"Regards,\nPretor Group")
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
-                    # CC logic not applied here as it is to the previous agent, but can be if desired
-                    link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
+                    
+                    # Add CC to Agent Email as well (Optional, but consistent)
+                    cc_param = f"&cc={cc_string}" if cc_string else ""
+                    
+                    link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
                     st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
@@ -568,6 +576,7 @@ def main():
                 provider_list = providers_df['Provider Name'].tolist()
                 selected_provider = st.selectbox("Select Provider to Email", provider_list)
                 
+                # DISPLAY SEND STATUS
                 prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
                 sent_date = str(prov_data['Date Emailed'])
                 p_mail = str(prov_data['Email'])
@@ -592,7 +601,7 @@ def main():
                                 safe_subject = urllib.parse.quote(subj)
                                 safe_body = urllib.parse.quote(body)
                                 
-                                # ADDED CC LOGIC HERE
+                                # CC logic included
                                 cc_param = f"&cc={cc_string}" if cc_string else ""
                                 
                                 link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
@@ -624,7 +633,11 @@ def main():
                         subject = f"URGENT: Outstanding Handover Items - {b_choice}"
                         safe_subject = urllib.parse.quote(subject)
                         safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
+                        
+                        # CC Logic
+                        cc_param = f"&cc={cc_string}" if cc_string else ""
+                        
+                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
@@ -664,7 +677,7 @@ def main():
                     safe_body = urllib.parse.quote(body)
                     safe_emails = client_email.replace(";", ",")
                     
-                    # ADDED CC LOGIC HERE
+                    # CC Logic
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
