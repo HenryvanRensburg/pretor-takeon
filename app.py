@@ -139,7 +139,7 @@ def update_checklist_item(building_name, task_name, received, notes, responsibil
             # AUTO-DATE LOGIC
             date_str = datetime.now().strftime("%Y-%m-%d") if received else ""
             ws.update_cell(target_row, 3, "TRUE" if received else "FALSE")
-            ws.update_cell(target_row, 4, date_str) # This saves the date
+            ws.update_cell(target_row, 4, date_str)
             ws.update_cell(target_row, 5, notes)
             ws.update_cell(target_row, 6, responsibility)
             ws.update_cell(target_row, 7, "FALSE")
@@ -382,14 +382,12 @@ def main():
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             
-            # ADDED: Date Received is now in the list!
             display_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Notes', 'Delete']
             
             edited_df = st.data_editor(
                 items_df[display_cols],
                 column_config={
                     "Received": st.column_config.CheckboxColumn(),
-                    # ADDED: Date Received is disabled (read-only)
                     "Date Received": st.column_config.TextColumn(disabled=True),
                     "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
                     "Delete": st.column_config.CheckboxColumn()
