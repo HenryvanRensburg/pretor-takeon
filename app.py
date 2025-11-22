@@ -39,9 +39,12 @@ def get_data(worksheet_name):
         except Exception as e:
             # Create sheet if missing (Auto-fix for ServiceProviders)
             if worksheet_name == "ServiceProviders":
-                sh.add_worksheet("ServiceProviders", 100, 5)
-                sh.worksheet("ServiceProviders").append_row(["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
-                return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
+                try:
+                    sh.add_worksheet("ServiceProviders", 100, 5)
+                    sh.worksheet("ServiceProviders").append_row(["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
+                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
+                except:
+                    return pd.DataFrame()
             st.error(f"Error reading {worksheet_name}: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
@@ -161,13 +164,33 @@ def finalize_project_db(building_name):
     ws.update_cell(cell.row, 20, final_date)
     return final_date
 
-# --- PDF GENERATORS ---
+# --- PDF GENERATORS (Safe Version) ---
+
+def clean_text(text):
+    """Removes special characters that break PDF generation."""
+    if text is None: return ""
+    text = str(text)
+    # Replace common "Smart Quotes" and symbols
+    replacements = {
+        "\u2013": "-",  # En dash
+        "\u2014": "-",  # Em dash
+        "\u2018": "'",  # Left single quote
+        "\u2019": "'",  # Right single quote
+        "\u201c": '"',  # Left double quote
+        "\u201d": '"',  # Right double quote
+        "\u2022": "*"   # Bullet
+    }
+    for char, repl in replacements.items():
+        text = text.replace(char, repl)
+    # Final safety: Encode to Latin-1, replacing unknown chars with '?'
+    return text.encode('latin-1', 'replace').decode('latin-1')
 
 def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, txt=f"HANDOVER REQUEST: {building_name}", ln=1, align='C')
+    # Wrap text in clean_text()
+    pdf.cell(0, 10, txt=clean_text(f"HANDOVER REQUEST: {building_name}"), ln=1, align='C')
     pdf.ln(5)
     
     pdf.set_font("Arial", size=11)
@@ -179,7 +202,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"In order to facilitate a smooth transition, kindly provide us with the documentation "
         f"and information listed in the schedule below. Please check off items as they are included."
     )
-    pdf.multi_cell(0, 7, letter_text)
+    pdf.multi_cell(0, 7, clean_text(letter_text))
     pdf.ln(10)
     
     pdf.set_font("Arial", 'B', 10)
@@ -189,11 +212,11 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     
     pdf.set_font("Arial", size=10)
     for item in master_items:
-        pdf.cell(140, 10, str(item)[:65], 1)
+        pdf.cell(140, 10, clean_text(str(item)[:65]), 1)
         pdf.cell(40, 10, "", 1)
         pdf.ln()
         
-    filename = f"{building_name}_Handover_Request.pdf"
+    filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
 
@@ -201,7 +224,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, txt=f"{title}: {building_name}", ln=1, align='C')
+    pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
     
     # Checklist Section
@@ -217,10 +240,10 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
-        pdf.cell(80, 10, str(row['Task Name'])[:40], 1)
+        pdf.cell(80, 10, clean_text(str(row['Task Name'])[:40]), 1)
         pdf.cell(30, 10, status, 1)
-        pdf.cell(40, 10, str(row['Responsibility'])[:20], 1)
-        pdf.cell(40, 10, str(row['Notes'])[:20], 1)
+        pdf.cell(40, 10, clean_text(str(row['Responsibility'])[:20]), 1)
+        pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
     
     # Service Providers Section
@@ -238,16 +261,16 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         
         pdf.set_font("Arial", size=9)
         for _, row in providers_df.iterrows():
-            pdf.cell(50, 10, str(row['Provider Name'])[:25], 1)
-            pdf.cell(50, 10, str(row['Service Type'])[:25], 1)
-            pdf.cell(50, 10, str(row['Email'])[:25], 1)
-            pdf.cell(40, 10, str(row['Phone'])[:20], 1)
+            pdf.cell(50, 10, clean_text(str(row['Provider Name'])[:25]), 1)
+            pdf.cell(50, 10, clean_text(str(row['Service Type'])[:25]), 1)
+            pdf.cell(50, 10, clean_text(str(row['Email'])[:25]), 1)
+            pdf.cell(40, 10, clean_text(str(row['Phone'])[:20]), 1)
             pdf.ln()
     else:
         pdf.set_font("Arial", 'I', 10)
         pdf.cell(0, 10, "No service providers recorded.", ln=1)
         
-    filename = f"{building_name}_Report.pdf"
+    filename = clean_text(f"{building_name}_Report.pdf")
     pdf.output(filename)
     return filename
 
@@ -433,7 +456,7 @@ def main():
 
             st.divider()
 
-            # --- STEP 3: SERVICE PROVIDERS (NEW) ---
+            # --- STEP 3: SERVICE PROVIDERS ---
             st.markdown("### 3. Service Providers")
             st.info("Capture details of service providers (Security, Gardening, Maintenance, etc.)")
             
@@ -511,7 +534,6 @@ def main():
                 if st.button("Finalize Project"):
                     if pending_df.empty:
                         date = finalize_project_db(b_choice)
-                        # Updated to include providers_df in PDF
                         pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
