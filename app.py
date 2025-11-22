@@ -28,11 +28,28 @@ def get_google_sheet():
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
-        worksheet = sh.worksheet(worksheet_name)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
-        df.columns = df.columns.str.strip()
-        return df
+        try:
+            worksheet = sh.worksheet(worksheet_name)
+            # get_all_values is safer than get_all_records
+            # It reads the sheet as a simple grid of text strings
+            data = worksheet.get_all_values() 
+            
+            if not data:
+                return pd.DataFrame()
+
+            # The first row is assumed to be the Header
+            headers = data.pop(0) 
+            
+            # Create DataFrame using the headers
+            df = pd.DataFrame(data, columns=headers)
+            
+            # Clean columns to remove accidental spaces (e.g. "Email " -> "Email")
+            df.columns = df.columns.str.strip()
+            
+            return df
+        except Exception as e:
+            st.error(f"Error reading sheet '{worksheet_name}'. Please check that Row 1 has unique headers and no empty columns between headers. Details: {e}")
+            return pd.DataFrame()
     return pd.DataFrame()
 
 def add_master_item(task_name):
@@ -364,3 +381,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
