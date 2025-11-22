@@ -1,6 +1,3 @@
-import streamlit as st
-import pandas as pd
-import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from fpdf import FPDF
@@ -117,7 +114,6 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(building_name)
-        # Assuming columns 24/25 based on previous structure
         ws.update_cell(cell.row, 24, agent_name)
         ws.update_cell(cell.row, 25, agent_email)
     except Exception as e:
@@ -137,9 +133,10 @@ def update_checklist_item(building_name, task_name, received, notes, responsibil
         if delete_flag:
             ws.delete_rows(target_row)
         else:
+            # AUTO-DATE LOGIC
             date_str = datetime.now().strftime("%Y-%m-%d") if received else ""
             ws.update_cell(target_row, 3, "TRUE" if received else "FALSE")
-            ws.update_cell(target_row, 4, date_str)
+            ws.update_cell(target_row, 4, date_str) # This saves the date
             ws.update_cell(target_row, 5, notes)
             ws.update_cell(target_row, 6, responsibility)
             ws.update_cell(target_row, 7, "FALSE")
@@ -149,7 +146,6 @@ def finalize_project_db(building_name):
     ws = sh.worksheet("Projects")
     cell = ws.find(building_name)
     final_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # Update Is_Finalized (22), Finalized_Date (23), Final Doc Date (20)
     ws.update_cell(cell.row, 22, "TRUE")
     ws.update_cell(cell.row, 23, final_date)
     ws.update_cell(cell.row, 20, final_date)
@@ -158,18 +154,13 @@ def finalize_project_db(building_name):
 # --- PDF GENERATORS ---
 
 def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date):
-    """Generates the formal appointment letter + checklist."""
     pdf = FPDF()
     pdf.add_page()
-    
-    # Header
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, txt=f"HANDOVER REQUEST: {building_name}", ln=1, align='C')
     pdf.ln(5)
     
-    # Formal Letter Body
     pdf.set_font("Arial", size=11)
-    
     letter_text = (
         f"ATTENTION: {agent_name}\n\n"
         f"RE: APPOINTMENT OF PRETOR GROUP AS MANAGING AGENTS\n\n"
@@ -178,11 +169,9 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"In order to facilitate a smooth transition, kindly provide us with the documentation "
         f"and information listed in the schedule below. Please check off items as they are included."
     )
-    
     pdf.multi_cell(0, 7, letter_text)
     pdf.ln(10)
     
-    # Checklist Table
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(140, 10, "Required Item / Document", 1)
     pdf.cell(40, 10, "Included?", 1)
@@ -233,7 +222,6 @@ def main():
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings"]
     choice = st.sidebar.selectbox("Menu", menu)
     
-    # --- DASHBOARD ---
     if choice == "Dashboard":
         st.subheader("Active Projects Overview")
         df = get_data("Projects")
@@ -244,7 +232,6 @@ def main():
         else:
             st.info("No projects found.")
 
-    # --- MASTER SCHEDULE ---
     elif choice == "Master Schedule":
         st.subheader("Master Checklist Template")
         with st.form("add_master"):
@@ -259,7 +246,6 @@ def main():
         if not df.empty:
             st.dataframe(df)
 
-    # --- NEW BUILDING ---
     elif choice == "New Building":
         st.subheader("Onboard New Complex")
         with st.form("new_complex_form"):
@@ -334,7 +320,6 @@ def main():
                 else:
                     st.error("Complex Name is required.")
 
-    # --- MANAGE BUILDINGS ---
     elif choice == "Manage Buildings":
         projects = get_data("Projects")
         if projects.empty:
@@ -342,7 +327,6 @@ def main():
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
             
-            # Get Project Details
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             
             client_email = str(proj_row.get('Client Email', ''))
@@ -350,13 +334,11 @@ def main():
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
             
-            # Get Checklist
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
             
-            # --- STEP 1: PREVIOUS AGENT HANDOVER (MOVED TO TOP) ---
+            # --- STEP 1: PREVIOUS AGENT HANDOVER ---
             st.markdown("### 1. Previous Agent Handover Request")
-            st.info("Generate the formal appointment notification and request for information.")
             
             col_a, col_b = st.columns(2)
             agent_name = col_a.text_input("Previous Agent Name", value=saved_agent_name)
@@ -367,16 +349,12 @@ def main():
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
                     
-                    # Generate Formal PDF
-                    # We filter specifically for items assigned to 'Previous Agent' or all items?
-                    # Usually a full handover checklist is sent.
                     request_items = items_df['Task Name'].tolist()
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date)
                     
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
                     
-                    # Generate Formal Email
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
                     body = (
                         f"Dear {agent_name},\n\n"
@@ -386,12 +364,10 @@ def main():
                         f"Kindly provide the requested documentation at your earliest convenience to ensure a smooth transition.\n\n"
                         f"Regards,\nPretor Group"
                     )
-                    
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
                     link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
                     st.markdown(link, unsafe_allow_html=True)
-                    
                 else:
                     st.error("Please enter Agent Name and Email.")
             
@@ -400,20 +376,22 @@ def main():
             # --- STEP 2: CHECKLIST ---
             st.markdown("### 2. Track Progress")
             
-            # Filter Booleans for Editor
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             
-            display_cols = ['Task Name', 'Received', 'Responsibility', 'Notes', 'Delete']
+            # ADDED: Date Received is now in the list!
+            display_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Notes', 'Delete']
             
             edited_df = st.data_editor(
                 items_df[display_cols],
                 column_config={
                     "Received": st.column_config.CheckboxColumn(),
+                    # ADDED: Date Received is disabled (read-only)
+                    "Date Received": st.column_config.TextColumn(disabled=True),
                     "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
                     "Delete": st.column_config.CheckboxColumn()
                 },
-                disabled=["Task Name"],
+                disabled=["Task Name", "Date Received"], 
                 hide_index=True,
                 key="editor"
             )
@@ -429,10 +407,9 @@ def main():
 
             st.divider()
             
-            # --- STEP 3: REPORTS & FINALIZATION ---
+            # --- STEP 3: REPORTS ---
             col1, col2 = st.columns(2)
             
-            # Reporting Logic
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
             
@@ -447,7 +424,7 @@ def main():
                     
                     body += "\n✅ RECEIVED:\n"
                     for _, row in completed_df.iterrows():
-                        body += f"- {row['Task Name']}\n"
+                        body += f"- {row['Task Name']} (Date: {row['Date Received']})\n"
                         
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
