@@ -37,6 +37,11 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
+            # Create sheet if missing (Auto-fix for ServiceProviders)
+            if worksheet_name == "ServiceProviders":
+                sh.add_worksheet("ServiceProviders", 100, 5)
+                sh.worksheet("ServiceProviders").append_row(["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
+                return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
             st.error(f"Error reading {worksheet_name}: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
@@ -46,25 +51,19 @@ def add_master_item(task_name, category):
     ws = sh.worksheet("Master")
     ws.append_row([task_name, category])
 
-def delete_master_item(task_name):
+def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
-    ws = sh.worksheet("Master")
-    try:
-        cell = ws.find(task_name)
-        ws.delete_rows(cell.row)
-    except:
-        st.warning("Item not found.")
+    ws = sh.worksheet("ServiceProviders")
+    ws.append_row([complex_name, name, service, email, phone])
 
 def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
     
-    # 1. DUPLICATE GUARD: Check if complex already exists
     existing_names = ws_projects.col_values(1)
     if data_dict["Complex Name"] in existing_names:
-        return "EXISTS" # Stop immediately if name exists
+        return "EXISTS"
 
-    # 2. Add Project
     row_data = [
         data_dict["Complex Name"],
         data_dict["Type"],
@@ -85,43 +84,33 @@ def create_new_building(data_dict):
         data_dict["Physical Address"],
         data_dict["Assigned Manager"],
         str(data_dict["Date Doc Requested"]),
-        "", # Date Final Doc Received
+        "", 
         data_dict["Client Email"],
-        "FALSE", # Is_Finalized
-        "", # Finalized_Date
-        "", # Agent Name
-        ""  # Agent Email
+        "FALSE", 
+        "", 
+        "", 
+        ""  
     ]
     ws_projects.append_row(row_data)
     
-    # 3. Read Master Schedule (Safely)
     ws_master = sh.worksheet("Master")
     raw_master = ws_master.get_all_values()
-    
-    # Convert raw list to list of dicts for easier handling
     if not raw_master: return False
     headers = raw_master.pop(0)
     master_data = [dict(zip(headers, row)) for row in raw_master]
     
-    b_type = data_dict["Type"] # "Body Corporate" or "HOA"
+    b_type = data_dict["Type"] 
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
     for item in master_data:
-        # Get raw category and clean it (remove spaces, make uppercase)
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
-        
-        # Determine if we should copy based on cleaned strings
         should_copy = False
         
-        # Logic: Copy if Category is BOTH (or empty), OR matches the building type
-        if raw_cat == "BOTH" or raw_cat == "":
-            should_copy = True
-        elif raw_cat == "BC" and b_type == "Body Corporate":
-            should_copy = True
-        elif raw_cat == "HOA" and b_type == "HOA":
-            should_copy = True
+        if raw_cat == "BOTH" or raw_cat == "": should_copy = True
+        elif raw_cat == "BC" and b_type == "Body Corporate": should_copy = True
+        elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
             
         if should_copy and task:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE"])
@@ -208,13 +197,16 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.output(filename)
     return filename
 
-def generate_report_pdf(building_name, items_df, title):
+def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=f"{title}: {building_name}", ln=1, align='C')
     pdf.ln(10)
     
+    # Checklist Section
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(80, 10, "Item", 1)
     pdf.cell(30, 10, "Status", 1)
@@ -230,6 +222,30 @@ def generate_report_pdf(building_name, items_df, title):
         pdf.cell(40, 10, str(row['Responsibility'])[:20], 1)
         pdf.cell(40, 10, str(row['Notes'])[:20], 1)
         pdf.ln()
+    
+    # Service Providers Section
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
+    
+    if not providers_df.empty:
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(50, 10, "Provider Name", 1)
+        pdf.cell(50, 10, "Service", 1)
+        pdf.cell(50, 10, "Email", 1)
+        pdf.cell(40, 10, "Phone", 1)
+        pdf.ln()
+        
+        pdf.set_font("Arial", size=9)
+        for _, row in providers_df.iterrows():
+            pdf.cell(50, 10, str(row['Provider Name'])[:25], 1)
+            pdf.cell(50, 10, str(row['Service Type'])[:25], 1)
+            pdf.cell(50, 10, str(row['Email'])[:25], 1)
+            pdf.cell(40, 10, str(row['Phone'])[:20], 1)
+            pdf.ln()
+    else:
+        pdf.set_font("Arial", 'I', 10)
+        pdf.cell(0, 10, "No service providers recorded.", ln=1)
         
     filename = f"{building_name}_Report.pdf"
     pdf.output(filename)
@@ -334,11 +350,10 @@ def main():
                         "Date Doc Requested": date_req
                     }
                     result = create_new_building(data)
-                    
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
                     elif result == "EXISTS":
-                        st.error(f"Error: '{complex_name}' already exists. Please delete it from the Projects sheet if you wish to recreate it.")
+                        st.error(f"Error: '{complex_name}' already exists.")
                     else:
                         st.warning("Created, but Master Schedule was empty.")
                 else:
@@ -352,18 +367,23 @@ def main():
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
             
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
-            
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
             
+            # Load Data
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
             
+            all_providers = get_data("ServiceProviders")
+            if not all_providers.empty:
+                providers_df = all_providers[all_providers['Complex Name'] == b_choice].copy()
+            else:
+                providers_df = pd.DataFrame()
+            
             # --- STEP 1: PREVIOUS AGENT HANDOVER ---
             st.markdown("### 1. Previous Agent Handover Request")
-            
             col_a, col_b = st.columns(2)
             agent_name = col_a.text_input("Previous Agent Name", value=saved_agent_name)
             agent_email = col_b.text_input("Previous Agent Email", value=saved_agent_email)
@@ -372,39 +392,28 @@ def main():
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
-                    
                     request_items = items_df['Task Name'].tolist()
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date)
-                    
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
-                    
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
-                    body = (
-                        f"Dear {agent_name},\n\n"
-                        f"Please accept this email as confirmation that Pretor Group has been appointed "
-                        f"as Managing Agents for {b_choice} effective from {take_on_date}.\n\n"
-                        f"Please find attached our formal handover checklist.\n\n"
-                        f"Kindly provide the requested documentation at your earliest convenience to ensure a smooth transition.\n\n"
-                        f"Regards,\nPretor Group"
-                    )
+                    body = (f"Dear {agent_name},\n\nPlease accept this email as confirmation that Pretor Group has been appointed "
+                            f"as Managing Agents for {b_choice} effective from {take_on_date}.\n\n"
+                            f"Please find attached our formal handover checklist.\n\n"
+                            f"Regards,\nPretor Group")
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
                     link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
                     st.markdown(link, unsafe_allow_html=True)
-                else:
-                    st.error("Please enter Agent Name and Email.")
             
             st.divider()
             
             # --- STEP 2: CHECKLIST ---
             st.markdown("### 2. Track Progress")
-            
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             
             display_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Notes', 'Delete']
-            
             edited_df = st.data_editor(
                 items_df[display_cols],
                 column_config={
@@ -414,80 +423,86 @@ def main():
                     "Delete": st.column_config.CheckboxColumn()
                 },
                 disabled=["Task Name", "Date Received"], 
-                hide_index=True,
-                key="editor"
+                hide_index=True, key="editor"
             )
-            
             if st.button("Save Changes"):
                 for index, row in edited_df.iterrows():
-                    update_checklist_item(
-                        b_choice, row['Task Name'], row['Received'], row['Notes'],
-                        row['Responsibility'], row['Delete']
-                    )
+                    update_checklist_item(b_choice, row['Task Name'], row['Received'], row['Notes'], row['Responsibility'], row['Delete'])
                 st.success("Checklist Updated!")
                 st.rerun()
 
             st.divider()
+
+            # --- STEP 3: SERVICE PROVIDERS (NEW) ---
+            st.markdown("### 3. Service Providers")
+            st.info("Capture details of service providers (Security, Gardening, Maintenance, etc.)")
             
-            # --- STEP 3: AGENT FOLLOW-UP ---
-            st.markdown("### 3. Agent Follow-up (Urgent)")
-            st.info("Send a reminder to the previous agent regarding outstanding items they are responsible for.")
+            with st.expander("Add New Service Provider", expanded=False):
+                with st.form("add_provider"):
+                    p_name = st.text_input("Provider Company Name")
+                    p_service = st.text_input("Service Delivered (e.g. Garden Service)")
+                    c1, c2 = st.columns(2)
+                    p_email = c1.text_input("Email Address")
+                    p_phone = c2.text_input("Telephone Number")
+                    
+                    if st.form_submit_button("Add Provider"):
+                        if p_name and p_service:
+                            add_service_provider(b_choice, p_name, p_service, p_email, p_phone)
+                            st.success("Provider Added!")
+                            st.rerun()
+                        else:
+                            st.error("Name and Service Type are required.")
             
-            # Filter for outstanding items assigned to Previous Agent
-            agent_pending_df = items_df[
-                (items_df['Received'] == False) & 
-                (items_df['Delete'] == False) & 
-                (items_df['Responsibility'] == 'Previous Agent')
-            ]
+            if not providers_df.empty:
+                st.dataframe(providers_df[["Provider Name", "Service Type", "Email", "Phone"]], hide_index=True)
+            else:
+                st.caption("No providers loaded yet.")
+
+            st.divider()
+            
+            # --- STEP 4: AGENT FOLLOW-UP ---
+            st.markdown("### 4. Agent Follow-up (Urgent)")
+            agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'] == 'Previous Agent')]
             
             if agent_pending_df.empty:
                 st.success("✅ No outstanding items marked for Previous Agent.")
             else:
                 st.write(f"**{len(agent_pending_df)} items outstanding from Previous Agent.**")
-                
                 if st.button("Draft Urgent Follow-up Email"):
                     if saved_agent_email:
-                        body = f"Dear {saved_agent_name},\n\nRE: URGENT - OUTSTANDING INFORMATION: {b_choice}\n\n"
-                        body += "Please note that the following items are still outstanding and are urgently required to finalize the handover:\n\n"
+                        body = f"Dear {saved_agent_name},\n\nRE: URGENT - OUTSTANDING INFORMATION: {b_choice}\n\n" \
+                               "Please note that the following items are still outstanding:\n\n"
                         for _, row in agent_pending_df.iterrows():
                             body += f"- {row['Task Name']}\n"
-                        body += "\nYour urgent cooperation in this matter is appreciated.\n\nRegards,\nPretor Group"
-                        
+                        body += "\nYour urgent cooperation is appreciated.\n\nRegards,\nPretor Group"
                         subject = f"URGENT: Outstanding Handover Items - {b_choice}"
                         safe_subject = urllib.parse.quote(subject)
                         safe_body = urllib.parse.quote(body)
-                        
-                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email in Outlook</a>'
+                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
-                    else:
-                        st.error("No Agent Email found. Please save agent details in Step 1.")
             
             st.divider()
             
-            # --- STEP 4: REPORTS ---
+            # --- STEP 5: REPORTS ---
             col1, col2 = st.columns(2)
-            
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
             
             with col1:
-                st.subheader("4. Reports & Comms")
-                if st.button("Draft Client Update"):
+                st.subheader("Client Update")
+                if st.button("Draft Client Email"):
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n⚠️ OUTSTANDING:\n"
                     if pending_df.empty: body += "- None\n"
                     else:
                         for _, row in pending_df.iterrows():
                             body += f"- {row['Task Name']} (Action: {row['Responsibility']})\n"
-                    
                     body += "\n✅ RECEIVED:\n"
                     for _, row in completed_df.iterrows():
                         body += f"- {row['Task Name']} (Date: {row['Date Received']})\n"
-                        
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
                     safe_emails = client_email.replace(";", ",")
-                    
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
 
@@ -496,7 +511,8 @@ def main():
                 if st.button("Finalize Project"):
                     if pending_df.empty:
                         date = finalize_project_db(b_choice)
-                        pdf = generate_report_pdf(b_choice, items_df, "Final Report")
+                        # Updated to include providers_df in PDF
+                        pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
                         st.balloons()
