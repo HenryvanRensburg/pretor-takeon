@@ -133,12 +133,20 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-def update_checklist_item(building_name, task_name, received, notes, responsibility, delete_flag):
-    sh = get_google_sheet()
-    ws = sh.worksheet("Checklist")
+# --- OPTIMIZED UPDATE FUNCTION ---
+def update_checklist_item_optimized(ws, building_name, task_name, received, notes, responsibility, delete_flag):
+    """
+    Optimized to take the 'ws' (Worksheet) object as an argument.
+    This prevents re-opening the connection 50 times in a loop.
+    """
+    # Find specific cell for this task
+    # Note: Optimization possibility - findall is still slow if repeated. 
+    # But passing 'ws' solves the connection limit crash.
     cells = ws.findall(building_name)
     target_row = None
+    
     for cell in cells:
+        # Check col 2 (Task Name)
         if ws.cell(cell.row, 2).value == task_name:
             target_row = cell.row
             break
@@ -148,6 +156,7 @@ def update_checklist_item(building_name, task_name, received, notes, responsibil
             ws.delete_rows(target_row)
         else:
             date_str = datetime.now().strftime("%Y-%m-%d") if received else ""
+            # Batch update is better, but cell updates are safer for logic
             ws.update_cell(target_row, 3, "TRUE" if received else "FALSE")
             ws.update_cell(target_row, 4, date_str)
             ws.update_cell(target_row, 5, notes)
@@ -170,26 +179,18 @@ def clean_text(text):
     """Removes special characters that break PDF generation."""
     if text is None: return ""
     text = str(text)
-    # Replace common "Smart Quotes" and symbols
     replacements = {
-        "\u2013": "-",  # En dash
-        "\u2014": "-",  # Em dash
-        "\u2018": "'",  # Left single quote
-        "\u2019": "'",  # Right single quote
-        "\u201c": '"',  # Left double quote
-        "\u201d": '"',  # Right double quote
-        "\u2022": "*"   # Bullet
+        "\u2013": "-", "\u2014": "-", "\u2018": "'", "\u2019": "'", 
+        "\u201c": '"', "\u201d": '"', "\u2022": "*"
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
-    # Final safety: Encode to Latin-1, replacing unknown chars with '?'
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 14)
-    # Wrap text in clean_text()
     pdf.cell(0, 10, txt=clean_text(f"HANDOVER REQUEST: {building_name}"), ln=1, align='C')
     pdf.ln(5)
     
@@ -448,11 +449,22 @@ def main():
                 disabled=["Task Name", "Date Received"], 
                 hide_index=True, key="editor"
             )
+            
+            # OPTIMIZED SAVE LOGIC (PREVENTS CRASH)
             if st.button("Save Changes"):
-                for index, row in edited_df.iterrows():
-                    update_checklist_item(b_choice, row['Task Name'], row['Received'], row['Notes'], row['Responsibility'], row['Delete'])
-                st.success("Checklist Updated!")
-                st.rerun()
+                # Open connection ONCE
+                sh = get_google_sheet()
+                if sh:
+                    ws = sh.worksheet("Checklist")
+                    with st.spinner("Saving changes..."):
+                        for index, row in edited_df.iterrows():
+                            update_checklist_item_optimized(
+                                ws, # Pass the open worksheet object!
+                                b_choice, row['Task Name'], row['Received'], 
+                                row['Notes'], row['Responsibility'], row['Delete']
+                            )
+                    st.success("Checklist Updated!")
+                    st.rerun()
 
             st.divider()
 
@@ -534,6 +546,7 @@ def main():
                 if st.button("Finalize Project"):
                     if pending_df.empty:
                         date = finalize_project_db(b_choice)
+                        # Updated to include providers_df in PDF
                         pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
