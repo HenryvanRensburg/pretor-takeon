@@ -202,7 +202,8 @@ def main():
     elif choice == "New Building":
         st.subheader("Onboard New Complex")
         b_name = st.text_input("Building Name")
-        b_email = st.text_input("Client Email (For Weekly Reports)")
+        # UPDATED INPUT: Prompt for comma separation
+        b_email = st.text_input("Client Email(s) (separate multiple with commas, e.g., a@test.com, b@test.com)")
         
         if st.button("Create Project"):
             if b_name:
@@ -222,7 +223,7 @@ def main():
             b_choice = st.selectbox("Select Complex", projects['Building Name'])
             proj_row = projects[projects['Building Name'] == b_choice].iloc[0]
             
-            client_email = str(proj_row.get('Email', ''))
+            client_emails_raw = str(proj_row.get('Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             is_finalized = str(proj_row.get('Is_Finalized', 'FALSE')).upper() == "TRUE"
@@ -291,19 +292,17 @@ def main():
             # --- SECTION 3: REPORTS ---
             col1, col2 = st.columns(2)
             
-            # Helper for logic
             pending_df = items_df[items_df['Received'] == "FALSE"]
             completed_df = items_df[items_df['Received'] == "TRUE"]
 
             with col1:
                 st.subheader("Weekly Reports")
                 
-                # Button 1: Client Report (UPDATED LOGIC)
+                # Button 1: Client Report
                 st.markdown("#### 1. Client Update")
                 if st.button("Draft Client Email"):
                     body = f"Dear Client,\n\nHere is the progress update for the take-on of {b_choice}.\n\n"
                     
-                    # Part A: Outstanding
                     body += "⚠️ OUTSTANDING ITEMS:\n"
                     if pending_df.empty:
                         body += "- None (All items received)\n"
@@ -313,7 +312,6 @@ def main():
                     
                     body += "\n"
                     
-                    # Part B: Received
                     body += "✅ ITEMS RECEIVED:\n"
                     if completed_df.empty:
                         body += "- None yet\n"
@@ -325,7 +323,11 @@ def main():
                     
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
-                    link = f'<a href="mailto:{client_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
+                    
+                    # LOGIC UPDATE: Format the email string to be mailto-safe (replace semicolons with commas)
+                    safe_emails = client_emails_raw.replace(";", ",")
+                    
+                    link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
                 
                 st.markdown("---")
