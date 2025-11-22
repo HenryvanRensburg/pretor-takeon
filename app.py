@@ -116,7 +116,7 @@ def create_new_building(data_dict):
         "", 
         "", 
         "",
-        data_dict["Manager Email"] # NEW FIELD: Column 26
+        data_dict["Manager Email"] 
     ]
     ws_projects.append_row(row_data)
     
@@ -441,7 +441,6 @@ def main():
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
-            # NEW: Fetch Manager Email (Handle if column missing in old data)
             manager_email = str(proj_row.get('Manager Email', ''))
             
             # Load Data (Cached)
@@ -550,7 +549,6 @@ def main():
                             success = update_service_provider_date(b_choice, selected_provider)
                             if success:
                                 subj = f"Notice of Appointment: Pretor Group - {b_choice}"
-                                # UPDATED BODY WITH MANAGER EMAIL
                                 body = (f"Dear {selected_provider},\n\n"
                                         f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
                                         f"effective {take_on_date}.\n\n"
@@ -614,6 +612,24 @@ def main():
                     for _, row in completed_df.iterrows():
                         note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                         body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
+                        
+                    # UPDATED: Add Service Provider Status to Email
+                    body += "\n📋 SERVICE PROVIDERS STATUS:\n"
+                    if providers_df.empty:
+                        body += "- None loaded yet\n"
+                    else:
+                        for _, row in providers_df.iterrows():
+                            name = row['Provider Name']
+                            service = row['Service Type']
+                            date_sent = str(row['Date Emailed'])
+                            
+                            if date_sent and date_sent != "None" and date_sent != "":
+                                status = f"✅ Notified ({date_sent})"
+                            else:
+                                status = "⚠️ Pending Notification"
+                            
+                            body += f"- {service}: {name} [{status}]\n"
+
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
