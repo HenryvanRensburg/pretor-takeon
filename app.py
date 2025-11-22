@@ -69,14 +69,13 @@ def update_service_provider_date(complex_name, provider_name):
         cell_list = ws.findall(complex_name)
         target_row = None
         for cell in cell_list:
-            # Check if Col 2 (Provider Name) matches
             if ws.cell(cell.row, 2).value == provider_name:
                 target_row = cell.row
                 break
         
         if target_row:
             today = datetime.now().strftime("%Y-%m-%d")
-            ws.update_cell(target_row, 6, today) # Column 6 is Date Emailed
+            ws.update_cell(target_row, 6, today) 
             clear_cache()
             return True
     except Exception as e:
@@ -116,7 +115,8 @@ def create_new_building(data_dict):
         "FALSE", 
         "", 
         "", 
-        ""  
+        "",
+        data_dict["Manager Email"] # NEW FIELD: Column 26
     ]
     ws_projects.append_row(row_data)
     
@@ -365,7 +365,9 @@ def main():
             
             c3, c4 = st.columns(2)
             fees = c3.text_input("Management Fees (Excl VAT)")
-            assigned_mgr = c4.text_input("Assigned Manager")
+            # UPDATED: Add Manager Email
+            assigned_mgr = c3.text_input("Assigned Manager Name")
+            mgr_email = c4.text_input("Assigned Manager Email")
             
             st.write("### Legal & Financial")
             l1, l2, l3 = st.columns(3)
@@ -413,6 +415,7 @@ def main():
                         "Expense Code": exp_code,
                         "Physical Address": phys_address,
                         "Assigned Manager": assigned_mgr,
+                        "Manager Email": mgr_email, # Pass to function
                         "Date Doc Requested": date_req
                     }
                     result = create_new_building(data)
@@ -438,6 +441,8 @@ def main():
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
+            # NEW: Fetch Manager Email (Handle if column missing in old data)
+            manager_email = str(proj_row.get('Manager Email', ''))
             
             # Load Data (Cached)
             all_items = get_data("Checklist")
@@ -531,39 +536,38 @@ def main():
                 provider_list = providers_df['Provider Name'].tolist()
                 selected_provider = st.selectbox("Select Provider to Email", provider_list)
                 
-                # DISPLAY SEND STATUS
+                # DISPLAY SEND STATUS WITH LOGIC TO DISABLE BUTTON
                 prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
                 sent_date = str(prov_data['Date Emailed'])
                 p_mail = str(prov_data['Email'])
                 
                 if sent_date and sent_date != "None" and sent_date != "":
                     st.success(f"✅ Email confirmation sent to {selected_provider} on: {sent_date}")
+                    st.info("To resend, clear the date in the Google Sheet.")
                 else:
-                    st.warning("⚠️ Confirmation email not yet sent.")
-                
-                if st.button("Draft Email & Mark as Sent"):
-                    if p_mail:
-                        success = update_service_provider_date(b_choice, selected_provider)
-                        if success:
-                            subj = f"Notice of Appointment: Pretor Group - {b_choice}"
-                            body = (f"Dear {selected_provider},\n\n"
-                                    f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
-                                    f"effective {take_on_date}.\n\n"
-                                    f"Please update your records accordingly.\n\n"
-                                    f"Your Portfolio Manager is {assigned_manager}. Please direct future correspondence regarding "
-                                    f"service delivery and invoicing to them.\n\n"
-                                    f"Regards,\nPretor Group")
-                            
-                            safe_subject = urllib.parse.quote(subj)
-                            safe_body = urllib.parse.quote(body)
-                            
-                            link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
-                            st.markdown(link, unsafe_allow_html=True)
-                            
-                            # Force rerun to update the visual table immediately
-                            st.rerun()
-                    else:
-                        st.error("This provider has no email address saved.")
+                    if st.button("Draft Email & Mark as Sent"):
+                        if p_mail:
+                            success = update_service_provider_date(b_choice, selected_provider)
+                            if success:
+                                subj = f"Notice of Appointment: Pretor Group - {b_choice}"
+                                # UPDATED BODY WITH MANAGER EMAIL
+                                body = (f"Dear {selected_provider},\n\n"
+                                        f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
+                                        f"effective {take_on_date}.\n\n"
+                                        f"Please update your records accordingly.\n\n"
+                                        f"Your Portfolio Manager is {assigned_manager} ({manager_email}). Please direct future correspondence regarding "
+                                        f"service delivery and invoicing to them.\n\n"
+                                        f"Regards,\nPretor Group")
+                                
+                                safe_subject = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                
+                                link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                
+                                st.rerun()
+                        else:
+                            st.error("This provider has no email address saved.")
             else:
                 st.caption("No providers loaded yet.")
 
