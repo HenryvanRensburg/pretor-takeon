@@ -35,7 +35,13 @@ def get_data(worksheet_name):
     if sh:
         worksheet = sh.worksheet(worksheet_name)
         data = worksheet.get_all_records()
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        
+        # CLEANUP: Strip whitespace from column names to prevent "KeyError"
+        # This turns "Building Name " into "Building Name"
+        df.columns = df.columns.str.strip() 
+        
+        return df
     return pd.DataFrame()
 
 def add_master_item(task_name):
@@ -149,9 +155,9 @@ def generate_pdf(building_name, items_df, final_date):
 
 # --- MAIN APP LAYOUT ---
 def main():
-    st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    st.set_page_config(page_title="Pretor Group: New Take-On", layout="wide")
     
-    st.title("🏢 Pretor Group: Cloud Take-On Manager")
+    st.title("🏢 Pretor Group: New Take-On")
 
     # Sidebar
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings"]
@@ -277,4 +283,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
