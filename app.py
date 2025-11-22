@@ -116,7 +116,11 @@ def create_new_building(data_dict):
         "", 
         "", 
         "",
-        data_dict["Manager Email"] 
+        data_dict["Manager Email"],
+        data_dict["Assistant Name"],  # NEW
+        data_dict["Assistant Email"], # NEW
+        data_dict["Bookkeeper Name"], # NEW
+        data_dict["Bookkeeper Email"] # NEW
     ]
     ws_projects.append_row(row_data)
     
@@ -363,13 +367,23 @@ def main():
             take_on_date = c1.date_input("Take On Date", datetime.today())
             units = c2.number_input("No of Units", min_value=1, step=1)
             
+            st.write("### Pretor Team")
+            # NEW: Pretor Team Inputs
             c3, c4 = st.columns(2)
-            fees = c3.text_input("Management Fees (Excl VAT)")
-            # UPDATED: Add Manager Email
-            assigned_mgr = c3.text_input("Assigned Manager Name")
-            mgr_email = c4.text_input("Assigned Manager Email")
+            assigned_mgr = c3.text_input("Portfolio Manager Name")
+            mgr_email = c4.text_input("Portfolio Manager Email")
             
-            st.write("### Legal & Financial")
+            c5, c6 = st.columns(2)
+            assist_name = c5.text_input("Portfolio Assistant Name")
+            assist_email = c6.text_input("Portfolio Assistant Email")
+            
+            c7, c8 = st.columns(2)
+            book_name = c7.text_input("Bookkeeper Name")
+            book_email = c8.text_input("Bookkeeper Email")
+            
+            st.write("### Financial & Legal")
+            fees = st.text_input("Management Fees (Excl VAT)")
+            
             l1, l2, l3 = st.columns(3)
             erf_no = l1.text_input("Erf No")
             ss_num = l2.text_input("SS Number (BC Only)")
@@ -415,7 +429,11 @@ def main():
                         "Expense Code": exp_code,
                         "Physical Address": phys_address,
                         "Assigned Manager": assigned_mgr,
-                        "Manager Email": mgr_email, # Pass to function
+                        "Manager Email": mgr_email, 
+                        "Assistant Name": assist_name, # NEW
+                        "Assistant Email": assist_email, # NEW
+                        "Bookkeeper Name": book_name, # NEW
+                        "Bookkeeper Email": book_email, # NEW
                         "Date Doc Requested": date_req
                     }
                     result = create_new_building(data)
@@ -442,6 +460,17 @@ def main():
             take_on_date = str(proj_row.get('Take On Date', ''))
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
+            
+            # Get new team fields
+            assistant_name = str(proj_row.get('Assistant Name', ''))
+            bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
+            
+            # Display Team Info
+            with st.expander("ℹ️ Pretor Team Details", expanded=False):
+                c1, c2, c3 = st.columns(3)
+                c1.write(f"**Manager:** {assigned_manager}\n{manager_email}")
+                c2.write(f"**Assistant:** {assistant_name}\n{str(proj_row.get('Assistant Email',''))}")
+                c3.write(f"**Bookkeeper:** {bookkeeper_name}\n{str(proj_row.get('Bookkeeper Email',''))}")
             
             # Load Data (Cached)
             all_items = get_data("Checklist")
@@ -613,7 +642,7 @@ def main():
                         note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                         body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
                         
-                    # UPDATED: Add Service Provider Status to Email
+                    # Add Service Provider Status to Email
                     body += "\n📋 SERVICE PROVIDERS STATUS:\n"
                     if providers_df.empty:
                         body += "- None loaded yet\n"
