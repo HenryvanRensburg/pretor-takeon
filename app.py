@@ -52,7 +52,6 @@ def delete_master_item(task_name):
 def create_new_building(name, email):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
-    # We now initialize with empty Agent Name/Email (Columns E and F)
     ws_projects.append_row([name, email, "FALSE", "", "", ""])
     
     ws_master = sh.worksheet("Master")
@@ -75,12 +74,10 @@ def create_new_building(name, email):
     return False
 
 def update_project_agent_details(building_name, agent_name, agent_email):
-    """Saves the Agent details to the Projects sheet."""
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(building_name)
-        # Update Col 5 (Agent Name) and Col 6 (Agent Email)
         ws.update_cell(cell.row, 5, agent_name)
         ws.update_cell(cell.row, 6, agent_email)
     except Exception as e:
@@ -225,7 +222,6 @@ def main():
             b_choice = st.selectbox("Select Complex", projects['Building Name'])
             proj_row = projects[projects['Building Name'] == b_choice].iloc[0]
             
-            # Get details (Handle cases where columns might be missing if sheet is old)
             client_email = str(proj_row.get('Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
@@ -240,23 +236,19 @@ def main():
                 st.write("Enter or update the previous agent's details:")
                 
                 col_a, col_b = st.columns(2)
-                # Pre-fill with saved data if available
                 agent_name = col_a.text_input("Previous Managing Agent Name", value=saved_agent_name)
                 agent_email = col_b.text_input("Previous Managing Agent Email", value=saved_agent_email)
                 
                 if st.button("Save Agent & Generate Request"):
                     if agent_email and agent_name:
-                        # 1. Save to Database
                         update_project_agent_details(b_choice, agent_name, agent_email)
                         st.success("Agent details saved to database.")
                         
-                        # 2. Generate PDF
                         request_items = items_df['Task Name'].tolist()
                         pdf_file = generate_initial_request_pdf(b_choice, request_items, agent_name)
                         with open(pdf_file, "rb") as f:
                             st.download_button("1. Download PDF Checklist", f, file_name=pdf_file)
                         
-                        # 3. Generate Email Link
                         subject = f"Handover Requirements: {b_choice}"
                         body = f"Dear {agent_name},\n\nPlease find attached the handover checklist for {b_choice}.\n\nKindly provide these items at your earliest convenience.\n\nRegards,\nPretor Group"
                         safe_subject = urllib.parse.quote(subject)
@@ -300,28 +292,45 @@ def main():
             col1, col2 = st.columns(2)
             
             # Helper for logic
-            received_count = len(items_df[items_df['Received'] == "TRUE"])
-            total = len(items_df)
             pending_df = items_df[items_df['Received'] == "FALSE"]
+            completed_df = items_df[items_df['Received'] == "TRUE"]
 
             with col1:
                 st.subheader("Weekly Reports")
                 
-                # Button 1: Client Report
+                # Button 1: Client Report (UPDATED LOGIC)
                 st.markdown("#### 1. Client Update")
                 if st.button("Draft Client Email"):
-                    body = f"Dear Client,\n\nProgress Update for {b_choice}:\n{received_count}/{total} items received.\n\nOutstanding items:\n"
-                    for _, row in pending_df.iterrows():
-                        body += f"- {row['Task Name']}\n"
+                    body = f"Dear Client,\n\nHere is the progress update for the take-on of {b_choice}.\n\n"
                     
-                    safe_subject = urllib.parse.quote(f"Update: {b_choice}")
+                    # Part A: Outstanding
+                    body += "⚠️ OUTSTANDING ITEMS:\n"
+                    if pending_df.empty:
+                        body += "- None (All items received)\n"
+                    else:
+                        for _, row in pending_df.iterrows():
+                            body += f"- {row['Task Name']}\n"
+                    
+                    body += "\n"
+                    
+                    # Part B: Received
+                    body += "✅ ITEMS RECEIVED:\n"
+                    if completed_df.empty:
+                        body += "- None yet\n"
+                    else:
+                        for _, row in completed_df.iterrows():
+                            body += f"- {row['Task Name']} (Received: {row['Date Received']})\n"
+                    
+                    body += "\nRegards,\nPretor Group"
+                    
+                    safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
                     link = f'<a href="mailto:{client_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
                 
                 st.markdown("---")
                 
-                # Button 2: Agent Reminder (NEW!)
+                # Button 2: Agent Reminder
                 st.markdown("#### 2. Agent Reminder")
                 if st.button("Draft Agent Reminder"):
                     if saved_agent_email and saved_agent_name:
@@ -333,7 +342,6 @@ def main():
                         safe_subject = urllib.parse.quote(f"Outstanding Items: {b_choice}")
                         safe_body = urllib.parse.quote(body)
                         
-                        # Uses the SAVED email from the database
                         link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📩 Open Agent Reminder</a>'
                         st.markdown(link, unsafe_allow_html=True)
                     else:
