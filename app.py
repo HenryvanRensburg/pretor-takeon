@@ -37,7 +37,6 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
-            # Create sheet if missing (Auto-fix for ServiceProviders)
             if worksheet_name == "ServiceProviders":
                 try:
                     sh.add_worksheet("ServiceProviders", 100, 5)
@@ -133,35 +132,66 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- OPTIMIZED UPDATE FUNCTION ---
-def update_checklist_item_optimized(ws, building_name, task_name, received, notes, responsibility, delete_flag):
+# --- NEW BATCH SAVE FUNCTION (CRASH PROOF) ---
+def save_checklist_batch(ws, building_name, edited_df):
     """
-    Optimized to take the 'ws' (Worksheet) object as an argument.
-    This prevents re-opening the connection 50 times in a loop.
+    Downloads the sheet ONCE, maps the rows, prepares all changes, 
+    and sends ONE update command. Prevents API Error.
     """
-    # Find specific cell for this task
-    # Note: Optimization possibility - findall is still slow if repeated. 
-    # But passing 'ws' solves the connection limit crash.
-    cells = ws.findall(building_name)
-    target_row = None
+    # 1. Get all data (One Read)
+    all_rows = ws.get_all_values()
     
-    for cell in cells:
-        # Check col 2 (Task Name)
-        if ws.cell(cell.row, 2).value == task_name:
-            target_row = cell.row
-            break
-            
-    if target_row:
-        if delete_flag:
-            ws.delete_rows(target_row)
+    # 2. Create a map: {Task Name : Row Number}
+    # We assume column 1 (index 0) is Complex Name, column 2 (index 1) is Task Name
+    task_row_map = {}
+    for idx, row in enumerate(all_rows):
+        # idx is 0-based, Google Sheets is 1-based.
+        if len(row) > 1 and row[0] == building_name:
+            task_row_map[row[1]] = idx + 1
+
+    cells_to_update = []
+    rows_to_delete = []
+
+    # 3. Iterate through user changes
+    for i, row in edited_df.iterrows():
+        task = row['Task Name']
+        row_idx = task_row_map.get(task)
+
+        if not row_idx: 
+            continue # Skip if not found (shouldn't happen)
+
+        if row['Delete']:
+            rows_to_delete.append(row_idx)
+            continue
+
+        # Date Logic: Keep existing date if available, else set today if checked
+        current_date_in_ui = str(row['Date Received']).strip()
+        if row['Received']:
+            if not current_date_in_ui or current_date_in_ui == "None":
+                date_val = datetime.now().strftime("%Y-%m-%d")
+            else:
+                date_val = current_date_in_ui
+            rec_val = "TRUE"
         else:
-            date_str = datetime.now().strftime("%Y-%m-%d") if received else ""
-            # Batch update is better, but cell updates are safer for logic
-            ws.update_cell(target_row, 3, "TRUE" if received else "FALSE")
-            ws.update_cell(target_row, 4, date_str)
-            ws.update_cell(target_row, 5, notes)
-            ws.update_cell(target_row, 6, responsibility)
-            ws.update_cell(target_row, 7, "FALSE")
+            date_val = ""
+            rec_val = "FALSE"
+
+        # 4. Prepare Updates (Columns 3, 4, 5, 6, 7)
+        # Received (3), Date (4), Notes (5), Responsibility (6), Delete (7)
+        cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
+        cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
+        cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
+        cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
+        cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE")) # Reset delete flag
+
+    # 5. Execute Updates (One Write)
+    if cells_to_update:
+        ws.update_cells(cells_to_update)
+
+    # 6. Execute Deletes (Bottom up)
+    if rows_to_delete:
+        for r in sorted(rows_to_delete, reverse=True):
+            ws.delete_rows(r)
 
 def finalize_project_db(building_name):
     sh = get_google_sheet()
@@ -173,10 +203,9 @@ def finalize_project_db(building_name):
     ws.update_cell(cell.row, 20, final_date)
     return final_date
 
-# --- PDF GENERATORS (Safe Version) ---
+# --- PDF GENERATORS ---
 
 def clean_text(text):
-    """Removes special characters that break PDF generation."""
     if text is None: return ""
     text = str(text)
     replacements = {
@@ -450,19 +479,14 @@ def main():
                 hide_index=True, key="editor"
             )
             
-            # OPTIMIZED SAVE LOGIC (PREVENTS CRASH)
+            # OPTIMIZED SAVE BUTTON
             if st.button("Save Changes"):
-                # Open connection ONCE
                 sh = get_google_sheet()
                 if sh:
                     ws = sh.worksheet("Checklist")
                     with st.spinner("Saving changes..."):
-                        for index, row in edited_df.iterrows():
-                            update_checklist_item_optimized(
-                                ws, # Pass the open worksheet object!
-                                b_choice, row['Task Name'], row['Received'], 
-                                row['Notes'], row['Responsibility'], row['Delete']
-                            )
+                        # Pass dataframe to batch function
+                        save_checklist_batch(ws, b_choice, edited_df)
                     st.success("Checklist Updated!")
                     st.rerun()
 
