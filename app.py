@@ -40,7 +40,7 @@ def get_data(worksheet_name):
         except Exception as e:
             if worksheet_name == "ServiceProviders":
                 try:
-                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
+                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
                 except:
                     return pd.DataFrame()
             return pd.DataFrame()
@@ -58,8 +58,34 @@ def add_master_item(task_name, category):
 def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
-    ws.append_row([complex_name, name, service, email, phone])
+    # Now includes an empty string for "Date Emailed" (Col 6)
+    ws.append_row([complex_name, name, service, email, phone, ""])
     clear_cache()
+
+def update_service_provider_date(complex_name, provider_name):
+    """Updates the Date Emailed column for a specific provider."""
+    sh = get_google_sheet()
+    ws = sh.worksheet("ServiceProviders")
+    try:
+        # Find the row. Ideally use unique IDs, but using composite search here.
+        # We search for the Complex Name first
+        cell_list = ws.findall(complex_name)
+        
+        target_row = None
+        for cell in cell_list:
+            # Check if Col 2 (Provider Name) matches
+            if ws.cell(cell.row, 2).value == provider_name:
+                target_row = cell.row
+                break
+        
+        if target_row:
+            today = datetime.now().strftime("%Y-%m-%d")
+            ws.update_cell(target_row, 6, today) # Column 6 is Date Emailed
+            clear_cache()
+            return True
+    except Exception as e:
+        st.error(f"Error updating provider date: {e}")
+    return False
 
 def create_new_building(data_dict):
     sh = get_google_sheet()
@@ -415,6 +441,7 @@ def main():
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
+            assigned_manager = str(proj_row.get('Assigned Manager', '')) # Need this for email
             
             # Load Data (Cached)
             all_items = get_data("Checklist")
@@ -470,7 +497,6 @@ def main():
                 hide_index=True, key="editor"
             )
             
-            # OPTIMIZED SAVE BUTTON
             if st.button("Save Changes"):
                 sh = get_google_sheet()
                 if sh:
@@ -484,8 +510,8 @@ def main():
 
             # --- STEP 3: SERVICE PROVIDERS ---
             st.markdown("### 3. Service Providers")
-            st.info("Capture details of service providers (Security, Gardening, Maintenance, etc.)")
             
+            # Part A: Add New
             with st.expander("Add New Service Provider", expanded=False):
                 with st.form("add_provider"):
                     p_name = st.text_input("Provider Company Name")
@@ -502,8 +528,43 @@ def main():
                         else:
                             st.error("Name and Service Type are required.")
             
+            # Part B: View & Email
             if not providers_df.empty:
-                st.dataframe(providers_df[["Provider Name", "Service Type", "Email", "Phone"]], hide_index=True)
+                st.write("Current Providers:")
+                st.dataframe(providers_df[["Provider Name", "Service Type", "Email", "Phone", "Date Emailed"]], hide_index=True)
+                
+                # NEW: EMAIL SECTION
+                st.markdown("#### Send Appointment Notice")
+                # Filter list for dropdown
+                provider_list = providers_df['Provider Name'].tolist()
+                selected_provider = st.selectbox("Select Provider to Email", provider_list)
+                
+                if st.button("Draft Email & Mark as Sent"):
+                    # Get specific provider email
+                    prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
+                    p_mail = str(prov_data['Email'])
+                    
+                    if p_mail:
+                        # Update Date
+                        update_service_provider_date(b_choice, selected_provider)
+                        st.success(f"Date updated for {selected_provider}!")
+                        
+                        # Generate Email
+                        subj = f"Notice of Appointment: Pretor Group - {b_choice}"
+                        body = (f"Dear {selected_provider},\n\n"
+                                f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
+                                f"effective {take_on_date}.\n\n"
+                                f"Please update your records accordingly.\n\n"
+                                f"Your Portfolio Manager is {assigned_manager}. Please direct future correspondence regarding "
+                                f"service delivery and invoicing to them.\n\n"
+                                f"Regards,\nPretor Group")
+                        
+                        safe_subject = urllib.parse.quote(subj)
+                        safe_body = urllib.parse.quote(body)
+                        link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                    else:
+                        st.error("This provider has no email address saved.")
             else:
                 st.caption("No providers loaded yet.")
 
@@ -541,21 +602,15 @@ def main():
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n⚠️ OUTSTANDING:\n"
-                    
-                    if pending_df.empty: 
-                        body += "- None\n"
+                    if pending_df.empty: body += "- None\n"
                     else:
                         for _, row in pending_df.iterrows():
-                            # ADDED: Include Note if present
                             note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                             body += f"- {row['Task Name']} (Action: {row['Responsibility']}){note_text}\n"
-                            
                     body += "\n✅ RECEIVED:\n"
                     for _, row in completed_df.iterrows():
-                        # ADDED: Include Note if present
                         note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                         body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
-                        
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
