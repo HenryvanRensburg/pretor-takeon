@@ -59,6 +59,12 @@ def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
     
+    # 1. DUPLICATE GUARD: Check if complex already exists
+    existing_names = ws_projects.col_values(1)
+    if data_dict["Complex Name"] in existing_names:
+        return "EXISTS" # Stop immediately if name exists
+
+    # 2. Add Project
     row_data = [
         data_dict["Complex Name"],
         data_dict["Type"],
@@ -88,29 +94,42 @@ def create_new_building(data_dict):
     ]
     ws_projects.append_row(row_data)
     
+    # 3. Read Master Schedule (Safely)
     ws_master = sh.worksheet("Master")
-    master_data = ws_master.get_all_records()
+    raw_master = ws_master.get_all_values()
     
-    b_type = data_dict["Type"] 
+    # Convert raw list to list of dicts for easier handling
+    if not raw_master: return False
+    headers = raw_master.pop(0)
+    master_data = [dict(zip(headers, row)) for row in raw_master]
+    
+    b_type = data_dict["Type"] # "Body Corporate" or "HOA"
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
     for item in master_data:
-        category = item.get("Category", "Both")
+        # Get raw category and clean it (remove spaces, make uppercase)
+        raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
         
+        # Determine if we should copy based on cleaned strings
         should_copy = False
-        if category == "Both": should_copy = True
-        elif category == "BC" and b_type == "Body Corporate": should_copy = True
-        elif category == "HOA" and b_type == "HOA": should_copy = True
+        
+        # Logic: Copy if Category is BOTH (or empty), OR matches the building type
+        if raw_cat == "BOTH" or raw_cat == "":
+            should_copy = True
+        elif raw_cat == "BC" and b_type == "Body Corporate":
+            should_copy = True
+        elif raw_cat == "HOA" and b_type == "HOA":
+            should_copy = True
             
         if should_copy and task:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE"])
     
     if new_rows:
         ws_checklist.append_rows(new_rows)
-        return True
-    return False
+        return "SUCCESS"
+    return "EMPTY_MASTER"
 
 def update_project_agent_details(building_name, agent_name, agent_email):
     sh = get_google_sheet()
@@ -136,7 +155,6 @@ def update_checklist_item(building_name, task_name, received, notes, responsibil
         if delete_flag:
             ws.delete_rows(target_row)
         else:
-            # AUTO-DATE LOGIC
             date_str = datetime.now().strftime("%Y-%m-%d") if received else ""
             ws.update_cell(target_row, 3, "TRUE" if received else "FALSE")
             ws.update_cell(target_row, 4, date_str)
@@ -315,9 +333,12 @@ def main():
                         "Assigned Manager": assigned_mgr,
                         "Date Doc Requested": date_req
                     }
-                    success = create_new_building(data)
-                    if success:
+                    result = create_new_building(data)
+                    
+                    if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
+                    elif result == "EXISTS":
+                        st.error(f"Error: '{complex_name}' already exists. Please delete it from the Projects sheet if you wish to recreate it.")
                     else:
                         st.warning("Created, but Master Schedule was empty.")
                 else:
@@ -408,7 +429,7 @@ def main():
 
             st.divider()
             
-            # --- STEP 3: AGENT FOLLOW-UP (NEW) ---
+            # --- STEP 3: AGENT FOLLOW-UP ---
             st.markdown("### 3. Agent Follow-up (Urgent)")
             st.info("Send a reminder to the previous agent regarding outstanding items they are responsible for.")
             
