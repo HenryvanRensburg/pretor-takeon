@@ -57,21 +57,34 @@ def create_new_building(name, email):
     # Columns: Building Name, Email, Is_Finalized, Finalized_Date
     ws_projects.append_row([name, email, "FALSE", ""])
     
-    # 2. Read Master Schedule
+    # 2. Read Master Schedule (Improved Logic)
     ws_master = sh.worksheet("Master")
-    master_tasks = ws_master.col_values(1) # Get all tasks from column 1
-    if "Task Name" in master_tasks: master_tasks.remove("Task Name") # Remove header if present
+    
+    # Get all values from Column A
+    all_values = ws_master.col_values(1)
+    
+    # Slicing: [1:] means "start from the 2nd item and take the rest"
+    # This automatically skips the header (row 1), whatever it is named.
+    if len(all_values) > 1:
+        master_tasks = all_values[1:] 
+    else:
+        master_tasks = [] # Sheet is empty
     
     # 3. Add items to Checklist Tab
     ws_checklist = sh.worksheet("Checklist")
-    # Prepare rows: [Building Name, Task Name, Received, Date, Notes]
+    
     new_rows = []
     for task in master_tasks:
-        if task: # Ensure not empty
+        # distinct check to ensure we don't copy empty blank lines
+        if task and str(task).strip() != "": 
+            # [Building Name, Task Name, Received, Date, Notes]
             new_rows.append([name, task, "FALSE", "", ""])
     
     if new_rows:
         ws_checklist.append_rows(new_rows)
+        return True # Return success
+    else:
+        return False # Return failure (no tasks found)
 
 def update_checklist_item(building_name, task_name, received, notes):
     sh = get_google_sheet()
@@ -171,14 +184,23 @@ def main():
                     delete_master_item(task)
                     st.rerun()
 
-    # --- NEW BUILDING ---
+  # --- NEW BUILDING ---
     elif choice == "New Building":
         st.subheader("Onboard New Complex")
         b_name = st.text_input("Building Name")
         b_email = st.text_input("Client Email")
+        
         if st.button("Create Project"):
-            create_new_building(b_name, b_email)
-            st.success(f"Project {b_name} created!")
+            if b_name:
+                # We call the function and check the result
+                success = create_new_building(b_name, b_email)
+                
+                if success:
+                    st.success(f"Project {b_name} created and Master Schedule copied!")
+                else:
+                    st.warning(f"Project {b_name} created, BUT Master Schedule was empty. Please add items to Master Schedule.")
+            else:
+                st.error("Please enter a building name.")
 
     # --- MANAGE BUILDINGS ---
     elif choice == "Manage Buildings":
@@ -255,3 +277,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
