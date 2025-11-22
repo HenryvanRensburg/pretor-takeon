@@ -58,7 +58,6 @@ def add_master_item(task_name, category):
 def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
-    # Now includes an empty string for "Date Emailed" (Col 6)
     ws.append_row([complex_name, name, service, email, phone, ""])
     clear_cache()
 
@@ -67,10 +66,7 @@ def update_service_provider_date(complex_name, provider_name):
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
     try:
-        # Find the row. Ideally use unique IDs, but using composite search here.
-        # We search for the Complex Name first
         cell_list = ws.findall(complex_name)
-        
         target_row = None
         for cell in cell_list:
             # Check if Col 2 (Provider Name) matches
@@ -441,7 +437,7 @@ def main():
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
-            assigned_manager = str(proj_row.get('Assigned Manager', '')) # Need this for email
+            assigned_manager = str(proj_row.get('Assigned Manager', ''))
             
             # Load Data (Cached)
             all_items = get_data("Checklist")
@@ -511,7 +507,6 @@ def main():
             # --- STEP 3: SERVICE PROVIDERS ---
             st.markdown("### 3. Service Providers")
             
-            # Part A: Add New
             with st.expander("Add New Service Provider", expanded=False):
                 with st.form("add_provider"):
                     p_name = st.text_input("Provider Company Name")
@@ -528,41 +523,45 @@ def main():
                         else:
                             st.error("Name and Service Type are required.")
             
-            # Part B: View & Email
             if not providers_df.empty:
                 st.write("Current Providers:")
                 st.dataframe(providers_df[["Provider Name", "Service Type", "Email", "Phone", "Date Emailed"]], hide_index=True)
                 
-                # NEW: EMAIL SECTION
                 st.markdown("#### Send Appointment Notice")
-                # Filter list for dropdown
                 provider_list = providers_df['Provider Name'].tolist()
                 selected_provider = st.selectbox("Select Provider to Email", provider_list)
                 
+                # DISPLAY SEND STATUS
+                prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
+                sent_date = str(prov_data['Date Emailed'])
+                p_mail = str(prov_data['Email'])
+                
+                if sent_date and sent_date != "None" and sent_date != "":
+                    st.success(f"✅ Email confirmation sent to {selected_provider} on: {sent_date}")
+                else:
+                    st.warning("⚠️ Confirmation email not yet sent.")
+                
                 if st.button("Draft Email & Mark as Sent"):
-                    # Get specific provider email
-                    prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
-                    p_mail = str(prov_data['Email'])
-                    
                     if p_mail:
-                        # Update Date
-                        update_service_provider_date(b_choice, selected_provider)
-                        st.success(f"Date updated for {selected_provider}!")
-                        
-                        # Generate Email
-                        subj = f"Notice of Appointment: Pretor Group - {b_choice}"
-                        body = (f"Dear {selected_provider},\n\n"
-                                f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
-                                f"effective {take_on_date}.\n\n"
-                                f"Please update your records accordingly.\n\n"
-                                f"Your Portfolio Manager is {assigned_manager}. Please direct future correspondence regarding "
-                                f"service delivery and invoicing to them.\n\n"
-                                f"Regards,\nPretor Group")
-                        
-                        safe_subject = urllib.parse.quote(subj)
-                        safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
-                        st.markdown(link, unsafe_allow_html=True)
+                        success = update_service_provider_date(b_choice, selected_provider)
+                        if success:
+                            subj = f"Notice of Appointment: Pretor Group - {b_choice}"
+                            body = (f"Dear {selected_provider},\n\n"
+                                    f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
+                                    f"effective {take_on_date}.\n\n"
+                                    f"Please update your records accordingly.\n\n"
+                                    f"Your Portfolio Manager is {assigned_manager}. Please direct future correspondence regarding "
+                                    f"service delivery and invoicing to them.\n\n"
+                                    f"Regards,\nPretor Group")
+                            
+                            safe_subject = urllib.parse.quote(subj)
+                            safe_body = urllib.parse.quote(body)
+                            
+                            link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                            
+                            # Force rerun to update the visual table immediately
+                            st.rerun()
                     else:
                         st.error("This provider has no email address saved.")
             else:
