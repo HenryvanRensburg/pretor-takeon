@@ -117,10 +117,10 @@ def create_new_building(data_dict):
         "", 
         "",
         data_dict["Manager Email"],
-        data_dict["Assistant Name"],  # NEW
-        data_dict["Assistant Email"], # NEW
-        data_dict["Bookkeeper Name"], # NEW
-        data_dict["Bookkeeper Email"] # NEW
+        data_dict["Assistant Name"],
+        data_dict["Assistant Email"],
+        data_dict["Bookkeeper Name"],
+        data_dict["Bookkeeper Email"]
     ]
     ws_projects.append_row(row_data)
     
@@ -368,7 +368,6 @@ def main():
             units = c2.number_input("No of Units", min_value=1, step=1)
             
             st.write("### Pretor Team")
-            # NEW: Pretor Team Inputs
             c3, c4 = st.columns(2)
             assigned_mgr = c3.text_input("Portfolio Manager Name")
             mgr_email = c4.text_input("Portfolio Manager Email")
@@ -430,10 +429,10 @@ def main():
                         "Physical Address": phys_address,
                         "Assigned Manager": assigned_mgr,
                         "Manager Email": mgr_email, 
-                        "Assistant Name": assist_name, # NEW
-                        "Assistant Email": assist_email, # NEW
-                        "Bookkeeper Name": book_name, # NEW
-                        "Bookkeeper Email": book_email, # NEW
+                        "Assistant Name": assist_name,
+                        "Assistant Email": assist_email,
+                        "Bookkeeper Name": book_name,
+                        "Bookkeeper Email": book_email,
                         "Date Doc Requested": date_req
                     }
                     result = create_new_building(data)
@@ -458,21 +457,25 @@ def main():
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
+            
+            # Team Details
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
+            assistant_email = str(proj_row.get('Assistant Email', ''))
+            bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
             
-            # Get new team fields
-            assistant_name = str(proj_row.get('Assistant Name', ''))
-            bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
+            # Build CC String
+            team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
+            cc_string = ",".join(team_emails)
             
             # Display Team Info
             with st.expander("ℹ️ Pretor Team Details", expanded=False):
                 c1, c2, c3 = st.columns(3)
                 c1.write(f"**Manager:** {assigned_manager}\n{manager_email}")
-                c2.write(f"**Assistant:** {assistant_name}\n{str(proj_row.get('Assistant Email',''))}")
-                c3.write(f"**Bookkeeper:** {bookkeeper_name}\n{str(proj_row.get('Bookkeeper Email',''))}")
+                c2.write(f"**Assistant:** {str(proj_row.get('Assistant Name',''))}\n{assistant_email}")
+                c3.write(f"**Bookkeeper:** {str(proj_row.get('Bookkeeper Name',''))}\n{bookkeeper_email}")
             
-            # Load Data (Cached)
+            # Load Data
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
             
@@ -503,6 +506,7 @@ def main():
                             f"Regards,\nPretor Group")
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
+                    # CC logic not applied here as it is to the previous agent, but can be if desired
                     link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
                     st.markdown(link, unsafe_allow_html=True)
             
@@ -564,7 +568,6 @@ def main():
                 provider_list = providers_df['Provider Name'].tolist()
                 selected_provider = st.selectbox("Select Provider to Email", provider_list)
                 
-                # DISPLAY SEND STATUS WITH LOGIC TO DISABLE BUTTON
                 prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
                 sent_date = str(prov_data['Date Emailed'])
                 p_mail = str(prov_data['Email'])
@@ -589,7 +592,10 @@ def main():
                                 safe_subject = urllib.parse.quote(subj)
                                 safe_body = urllib.parse.quote(body)
                                 
-                                link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
+                                # ADDED CC LOGIC HERE
+                                cc_param = f"&cc={cc_string}" if cc_string else ""
+                                
+                                link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
                                 st.markdown(link, unsafe_allow_html=True)
                                 
                                 st.rerun()
@@ -642,7 +648,6 @@ def main():
                         note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                         body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
                         
-                    # Add Service Provider Status to Email
                     body += "\n📋 SERVICE PROVIDERS STATUS:\n"
                     if providers_df.empty:
                         body += "- None loaded yet\n"
@@ -651,19 +656,18 @@ def main():
                             name = row['Provider Name']
                             service = row['Service Type']
                             date_sent = str(row['Date Emailed'])
-                            
-                            if date_sent and date_sent != "None" and date_sent != "":
-                                status = f"✅ Notified ({date_sent})"
-                            else:
-                                status = "⚠️ Pending Notification"
-                            
+                            status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
                             body += f"- {service}: {name} [{status}]\n"
 
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
                     safe_emails = client_email.replace(";", ",")
-                    link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
+                    
+                    # ADDED CC LOGIC HERE
+                    cc_param = f"&cc={cc_string}" if cc_string else ""
+                    
+                    link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
 
             with col2:
