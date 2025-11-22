@@ -4,9 +4,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from fpdf import FPDF
+import urllib.parse # Needed for the email link
 
 # --- CONFIGURATION ---
-# We look for the credentials in Streamlit's "Secrets" storage
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -14,33 +14,25 @@ SCOPES = [
 
 # --- GOOGLE SHEETS CONNECTION ---
 def get_google_sheet():
-    """Connects to Google Sheets using credentials from Streamlit Secrets."""
     try:
-        # Load credentials from Streamlit secrets
         credentials_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
         client = gspread.authorize(creds)
-        
-        # Open the specific Google Sheet by name (You must create this sheet first!)
         sheet = client.open("Pretor TakeOn DB")
         return sheet
     except Exception as e:
-        st.error(f"Could not connect to Google Sheets. Error: {e}")
+        st.error(f"Connection Error. Please check Secrets. Details: {e}")
         return None
 
 # --- DATA FUNCTIONS ---
-
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
         worksheet = sh.worksheet(worksheet_name)
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-        
-        # CLEANUP: Strip whitespace from column names to prevent "KeyError"
-        # This turns "Building Name " into "Building Name"
-        df.columns = df.columns.str.strip() 
-        
+        # Clean columns to avoid whitespace errors
+        df.columns = df.columns.str.strip()
         return df
     return pd.DataFrame()
 
@@ -52,66 +44,49 @@ def add_master_item(task_name):
 def delete_master_item(task_name):
     sh = get_google_sheet()
     ws = sh.worksheet("Master")
-    cell = ws.find(task_name)
-    ws.delete_rows(cell.row)
+    try:
+        cell = ws.find(task_name)
+        ws.delete_rows(cell.row)
+    except:
+        st.warning("Item not found in Sheet to delete.")
 
 def create_new_building(name, email):
     sh = get_google_sheet()
-    
-    # 1. Add to Projects Tab
     ws_projects = sh.worksheet("Projects")
-    # Columns: Building Name, Email, Is_Finalized, Finalized_Date
     ws_projects.append_row([name, email, "FALSE", ""])
     
-    # 2. Read Master Schedule (Improved Logic)
     ws_master = sh.worksheet("Master")
-    
-    # Get all values from Column A
     all_values = ws_master.col_values(1)
     
-    # Slicing: [1:] means "start from the 2nd item and take the rest"
-    # This automatically skips the header (row 1), whatever it is named.
     if len(all_values) > 1:
         master_tasks = all_values[1:] 
     else:
-        master_tasks = [] # Sheet is empty
+        master_tasks = [] 
     
-    # 3. Add items to Checklist Tab
     ws_checklist = sh.worksheet("Checklist")
-    
     new_rows = []
     for task in master_tasks:
-        # distinct check to ensure we don't copy empty blank lines
         if task and str(task).strip() != "": 
-            # [Building Name, Task Name, Received, Date, Notes]
             new_rows.append([name, task, "FALSE", "", ""])
     
     if new_rows:
         ws_checklist.append_rows(new_rows)
-        return True # Return success
-    else:
-        return False # Return failure (no tasks found)
+        return True
+    return False
 
 def update_checklist_item(building_name, task_name, received, notes):
     sh = get_google_sheet()
     ws = sh.worksheet("Checklist")
-    
-    # Find the row that matches both Building Name and Task Name
-    # Note: This search can be slow if the sheet is huge. 
-    # For a production app, we usually use unique IDs, but Name is easier for now.
-    
     cells = ws.findall(building_name)
     target_row = None
     for cell in cells:
-        # Check if the task name in this row matches
-        task_cell_val = ws.cell(cell.row, 2).value # Column 2 is Task Name
+        task_cell_val = ws.cell(cell.row, 2).value
         if task_cell_val == task_name:
             target_row = cell.row
             break
     
     if target_row:
         date_str = datetime.now().strftime("%Y-%m-%d") if received else ""
-        # Update Received (Col 3), Date (Col 4), Notes (Col 5)
         ws.update_cell(target_row, 3, "TRUE" if received else "FALSE")
         ws.update_cell(target_row, 4, date_str)
         ws.update_cell(target_row, 5, notes)
@@ -121,14 +96,49 @@ def finalize_project_db(building_name):
     ws = sh.worksheet("Projects")
     cell = ws.find(building_name)
     final_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Update Is_Finalized (Col 3) and Date (Col 4)
     ws.update_cell(cell.row, 3, "TRUE")
     ws.update_cell(cell.row, 4, final_date)
     return final_date
 
-# --- PDF GENERATION (Same as before) ---
-def generate_pdf(building_name, items_df, final_date):
+# --- PDF GENERATORS ---
+
+def generate_initial_request_pdf(building_name, master_items):
+    """Generates a checklist for the previous agent."""
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt=f"Handover Request: {building_name}", ln=1, align='C')
+    pdf.ln(10)
+    
+    # Intro Text
+    pdf.set_font("Arial", size=11)
+    intro = (f"Dear Managing Agent,\n\n"
+             f"Please kindly provide the following information and documents regarding the "
+             f"handover of {building_name}. Please tick the items as you attach them.")
+    pdf.multi_cell(0, 7, intro)
+    pdf.ln(10)
+    
+    # Table Header
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(150, 10, "Required Item / Document", 1)
+    pdf.cell(30, 10, "Included?", 1)
+    pdf.ln()
+    
+    # Items
+    pdf.set_font("Arial", size=10)
+    for item in master_items:
+        pdf.cell(150, 10, str(item)[:70], 1) # Truncate if too long
+        pdf.cell(30, 10, "", 1) # Empty box for them to tick
+        pdf.ln()
+        
+    filename = f"{building_name}_Handover_Request.pdf"
+    pdf.output(filename)
+    return filename
+
+def generate_final_pdf(building_name, items_df, final_date):
+    """Generates the final report for the client."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
@@ -137,14 +147,16 @@ def generate_pdf(building_name, items_df, final_date):
     pdf.set_font("Arial", size=10)
     pdf.cell(200, 10, txt=f"Finalized on: {final_date}", ln=1, align='C')
     pdf.ln(10)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(80, 10, "Item", 1)
     pdf.cell(30, 10, "Date Rec.", 1)
     pdf.cell(80, 10, "Notes", 1)
     pdf.ln()
+    
     pdf.set_font("Arial", size=10)
     for _, row in items_df.iterrows():
-        status_date = row['Date Received'] if row['Received'] == "TRUE" else "Pending"
+        status_date = row['Date Received'] if row['Received'] else "Pending"
         pdf.cell(80, 10, str(row['Task Name'])[:40], 1)
         pdf.cell(30, 10, str(status_date), 1)
         pdf.cell(80, 10, str(row['Notes'])[:40], 1)
@@ -153,13 +165,11 @@ def generate_pdf(building_name, items_df, final_date):
     pdf.output(filename)
     return filename
 
-# --- MAIN APP LAYOUT ---
+# --- MAIN APP ---
 def main():
-    st.set_page_config(page_title="Pretor Group: New Take-On", layout="wide")
-    
-    st.title("🏢 Pretor Group: New Take-On")
+    st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    st.title("🏢 Pretor Group: Cloud Take-On Manager")
 
-    # Sidebar
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings"]
     choice = st.sidebar.selectbox("Menu", menu)
     
@@ -170,7 +180,7 @@ def main():
         if not df.empty:
             st.dataframe(df)
         else:
-            st.info("No projects found. Create one in 'New Building'.")
+            st.info("No projects found.")
 
     # --- MASTER SCHEDULE ---
     elif choice == "Master Schedule":
@@ -183,14 +193,15 @@ def main():
             
         df = get_data("Master")
         if not df.empty:
-            for task in df['Task Name']:
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"• {task}")
-                if c2.button("Delete", key=task):
-                    delete_master_item(task)
-                    st.rerun()
+            if "Task Name" in df.columns:
+                for task in df['Task Name']:
+                    c1, c2 = st.columns([4, 1])
+                    c1.write(f"• {task}")
+                    if c2.button("Delete", key=task):
+                        delete_master_item(task)
+                        st.rerun()
 
-  # --- NEW BUILDING ---
+    # --- NEW BUILDING ---
     elif choice == "New Building":
         st.subheader("Onboard New Complex")
         b_name = st.text_input("Building Name")
@@ -198,15 +209,13 @@ def main():
         
         if st.button("Create Project"):
             if b_name:
-                # We call the function and check the result
                 success = create_new_building(b_name, b_email)
-                
                 if success:
-                    st.success(f"Project {b_name} created and Master Schedule copied!")
+                    st.success(f"Project {b_name} created!")
                 else:
-                    st.warning(f"Project {b_name} created, BUT Master Schedule was empty. Please add items to Master Schedule.")
+                    st.warning("Created, but Master Schedule was empty.")
             else:
-                st.error("Please enter a building name.")
+                st.error("Please enter a name.")
 
     # --- MANAGE BUILDINGS ---
     elif choice == "Manage Buildings":
@@ -216,23 +225,52 @@ def main():
         else:
             b_choice = st.selectbox("Select Complex", projects['Building Name'])
             
-            # Get Project Status
+            # Get Project Data
             proj_row = projects[projects['Building Name'] == b_choice].iloc[0]
+            client_email = str(proj_row['Email']) # Get email for the mailto link
             is_finalized = str(proj_row['Is_Finalized']).upper() == "TRUE"
             
+            # Get Items
+            all_items = get_data("Checklist")
+            items_df = all_items[all_items['Building Name'] == b_choice].copy()
+            
+            # --- NEW: AGENT REQUEST SECTION ---
+            with st.expander("📄 Step 1: Request Info from Previous Agent", expanded=False):
+                st.write("Generate a PDF checklist to send to the previous agent.")
+                
+                if st.button("Generate Agent Request PDF"):
+                    # Get master items for this specific building from the current checklist
+                    # (Using the checklist ensures we use the items relevant to THIS building)
+                    request_items = items_df['Task Name'].tolist()
+                    
+                    pdf_file = generate_initial_request_pdf(b_choice, request_items)
+                    
+                    with open(pdf_file, "rb") as f:
+                        st.download_button("Download PDF Checklist", f, file_name=pdf_file)
+                    
+                    # Generate Mailto Link for Outlook
+                    subject = f"Handover Requirements: {b_choice}"
+                    body = f"Dear Managing Agent,\n\nPlease find attached the handover checklist for {b_choice}.\n\nKindly provide these items at your earliest convenience.\n\nRegards,\nPretor Group"
+                    
+                    # URL Encode the strings for the link
+                    safe_subject = urllib.parse.quote(subject)
+                    safe_body = urllib.parse.quote(body)
+                    
+                    # Note: We cannot auto-attach files in web links (browser security).
+                    mailto_link = f'<a href="mailto:?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">Open Email Draft in Outlook</a>'
+                    
+                    st.markdown(mailto_link, unsafe_allow_html=True)
+                    st.caption("⚠️ Click 'Download' first, then click 'Open Email'. Drag the PDF into the email.")
+
+            st.divider()
+
+            # --- CHECKLIST EDITOR ---
+            st.subheader("Step 2: Track Progress")
             if is_finalized:
                 st.success(f"🔒 Finalized on {proj_row['Finalized_Date']}")
 
-            # Get Checklist Items
-            all_items = get_data("Checklist")
-            # Filter for this building
-            items_df = all_items[all_items['Building Name'] == b_choice]
-            
-            # Display Editor
-            # We construct a simpler dataframe for the editor
+            # Prepare dataframe for editor
             display_df = items_df[['Task Name', 'Received', 'Date Received', 'Notes']].copy()
-            
-            # Convert "TRUE"/"FALSE" strings to Booleans for the checkbox to work
             display_df['Received'] = display_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
 
             edited_df = st.data_editor(
@@ -247,41 +285,49 @@ def main():
             )
             
             if st.button("Save Changes"):
-                # We must find what changed. 
-                # For simplicity in this version, we iterate and update.
                 for index, row in edited_df.iterrows():
-                    # Compare with original logic or just push updates
-                    # Convert boolean back to string for storage logic
                     update_checklist_item(b_choice, row['Task Name'], row['Received'], row['Notes'])
-                st.success("Saved to Google Sheets!")
+                st.success("Saved!")
                 st.rerun()
             
             st.divider()
             
-            # Weekly Report
-            if st.button("Generate Weekly Report Email"):
-                received_count = len(items_df[items_df['Received'] == "TRUE"])
-                total = len(items_df)
-                pending_df = items_df[items_df['Received'] == "FALSE"]
-                
-                email_text = f"""Subject: Progress Update: {b_choice}\n\nProgress: {received_count}/{total} items received.\n\nPending Items:\n"""
-                for _, row in pending_df.iterrows():
-                    email_text += f"- {row['Task Name']}\n"
-                st.text_area("Email Draft", email_text, height=200)
+            # --- WEEKLY REPORT & FINALIZATION ---
+            col1, col2 = st.columns(2)
             
-            # Finalize
-            if not is_finalized and st.button("Finalize Project"):
-                 # Check if all true
-                 if not any(items_df['Received'] == "FALSE"):
-                     date = finalize_project_db(b_choice)
-                     pdf = generate_pdf(b_choice, items_df, date)
-                     with open(pdf, "rb") as f:
-                        st.download_button("Download PDF", f, file_name=pdf)
-                     st.balloons()
-                 else:
-                     st.error("Complete all items first.")
+            with col1:
+                st.subheader("Weekly Report")
+                if st.button("Draft Client Email"):
+                    received_count = len(items_df[items_df['Received'] == "TRUE"])
+                    total = len(items_df)
+                    pending_df = items_df[items_df['Received'] == "FALSE"]
+                    
+                    body = f"Dear Client,\n\nProgress Update for {b_choice}:\n{received_count}/{total} items received.\n\nOutstanding items:\n"
+                    for _, row in pending_df.iterrows():
+                        body += f"- {row['Task Name']}\n"
+                    
+                    safe_subject = urllib.parse.quote(f"Update: {b_choice}")
+                    safe_body = urllib.parse.quote(body)
+                    
+                    # Mailto link using the client email from database
+                    link = f'<a href="mailto:{client_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="text-decoration:none;">📩 Click here to open Email</a>'
+                    st.markdown(link, unsafe_allow_html=True)
+
+            with col2:
+                st.subheader("Finalize")
+                if not is_finalized:
+                    if st.button("Finalize Project"):
+                         if not any(items_df['Received'] == "FALSE"):
+                             date = finalize_project_db(b_choice)
+                             pdf = generate_final_pdf(b_choice, items_df, date)
+                             with open(pdf, "rb") as f:
+                                st.download_button("Download Final PDF", f, file_name=pdf)
+                             st.balloons()
+                         else:
+                             st.error("Complete all items first.")
 
 if __name__ == "__main__":
     main()
+
 
 
