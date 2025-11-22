@@ -408,14 +408,49 @@ def main():
 
             st.divider()
             
-            # --- STEP 3: REPORTS ---
+            # --- STEP 3: AGENT FOLLOW-UP (NEW) ---
+            st.markdown("### 3. Agent Follow-up (Urgent)")
+            st.info("Send a reminder to the previous agent regarding outstanding items they are responsible for.")
+            
+            # Filter for outstanding items assigned to Previous Agent
+            agent_pending_df = items_df[
+                (items_df['Received'] == False) & 
+                (items_df['Delete'] == False) & 
+                (items_df['Responsibility'] == 'Previous Agent')
+            ]
+            
+            if agent_pending_df.empty:
+                st.success("✅ No outstanding items marked for Previous Agent.")
+            else:
+                st.write(f"**{len(agent_pending_df)} items outstanding from Previous Agent.**")
+                
+                if st.button("Draft Urgent Follow-up Email"):
+                    if saved_agent_email:
+                        body = f"Dear {saved_agent_name},\n\nRE: URGENT - OUTSTANDING INFORMATION: {b_choice}\n\n"
+                        body += "Please note that the following items are still outstanding and are urgently required to finalize the handover:\n\n"
+                        for _, row in agent_pending_df.iterrows():
+                            body += f"- {row['Task Name']}\n"
+                        body += "\nYour urgent cooperation in this matter is appreciated.\n\nRegards,\nPretor Group"
+                        
+                        subject = f"URGENT: Outstanding Handover Items - {b_choice}"
+                        safe_subject = urllib.parse.quote(subject)
+                        safe_body = urllib.parse.quote(body)
+                        
+                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email in Outlook</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                    else:
+                        st.error("No Agent Email found. Please save agent details in Step 1.")
+            
+            st.divider()
+            
+            # --- STEP 4: REPORTS ---
             col1, col2 = st.columns(2)
             
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
             
             with col1:
-                st.subheader("Client Communications")
+                st.subheader("4. Reports & Comms")
                 if st.button("Draft Client Update"):
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n⚠️ OUTSTANDING:\n"
                     if pending_df.empty: body += "- None\n"
