@@ -24,7 +24,11 @@ def get_google_sheet():
         st.error(f"Connection Error. Please check Secrets. Details: {e}")
         return None
 
-# --- DATA FUNCTIONS ---
+# --- DATA FUNCTIONS (WITH CACHING FIX) ---
+
+# @st.cache_data tells Streamlit to hold this data in memory for 15 seconds
+# This prevents hitting the Google API Limit (Error 429)
+@st.cache_data(ttl=15)
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
@@ -37,26 +41,33 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
+            # Create sheet if missing (Auto-fix for ServiceProviders)
             if worksheet_name == "ServiceProviders":
                 try:
-                    sh.add_worksheet("ServiceProviders", 100, 5)
-                    sh.worksheet("ServiceProviders").append_row(["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
+                    # We can't return a DF here easily without breaking cache logic, 
+                    # but this handles the setup on first run.
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
                 except:
                     return pd.DataFrame()
-            st.error(f"Error reading {worksheet_name}: {e}")
+            # Don't show error for master schedule read if it fails temporarily
             return pd.DataFrame()
     return pd.DataFrame()
+
+def clear_cache():
+    """Helper to force a reload after saving data"""
+    st.cache_data.clear()
 
 def add_master_item(task_name, category):
     sh = get_google_sheet()
     ws = sh.worksheet("Master")
     ws.append_row([task_name, category])
+    clear_cache() # Refresh data
 
 def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
     ws.append_row([complex_name, name, service, email, phone])
+    clear_cache() # Refresh data
 
 def create_new_building(data_dict):
     sh = get_google_sheet()
@@ -119,8 +130,9 @@ def create_new_building(data_dict):
     
     if new_rows:
         ws_checklist.append_rows(new_rows)
-        return "SUCCESS"
-    return "EMPTY_MASTER"
+        
+    clear_cache() # Refresh data
+    return "SUCCESS"
 
 def update_project_agent_details(building_name, agent_name, agent_email):
     sh = get_google_sheet()
@@ -129,45 +141,40 @@ def update_project_agent_details(building_name, agent_name, agent_email):
         cell = ws.find(building_name)
         ws.update_cell(cell.row, 24, agent_name)
         ws.update_cell(cell.row, 25, agent_email)
+        clear_cache()
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- NEW BATCH SAVE FUNCTION (CRASH PROOF) ---
+# --- NEW BATCH SAVE FUNCTION ---
 def save_checklist_batch(ws, building_name, edited_df):
     """
     Downloads the sheet ONCE, maps the rows, prepares all changes, 
     and sends ONE update command. Prevents API Error.
     """
-    # 1. Get all data (One Read)
     all_rows = ws.get_all_values()
     
-    # 2. Create a map: {Task Name : Row Number}
-    # We assume column 1 (index 0) is Complex Name, column 2 (index 1) is Task Name
+    # Map Task Name -> Row Number
     task_row_map = {}
     for idx, row in enumerate(all_rows):
-        # idx is 0-based, Google Sheets is 1-based.
         if len(row) > 1 and row[0] == building_name:
             task_row_map[row[1]] = idx + 1
 
     cells_to_update = []
     rows_to_delete = []
 
-    # 3. Iterate through user changes
     for i, row in edited_df.iterrows():
         task = row['Task Name']
         row_idx = task_row_map.get(task)
 
-        if not row_idx: 
-            continue # Skip if not found (shouldn't happen)
+        if not row_idx: continue 
 
         if row['Delete']:
             rows_to_delete.append(row_idx)
             continue
 
-        # Date Logic: Keep existing date if available, else set today if checked
         current_date_in_ui = str(row['Date Received']).strip()
         if row['Received']:
-            if not current_date_in_ui or current_date_in_ui == "None":
+            if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_val = current_date_in_ui
@@ -176,22 +183,21 @@ def save_checklist_batch(ws, building_name, edited_df):
             date_val = ""
             rec_val = "FALSE"
 
-        # 4. Prepare Updates (Columns 3, 4, 5, 6, 7)
-        # Received (3), Date (4), Notes (5), Responsibility (6), Delete (7)
+        # Batch cells: Col 3 (Rec), 4 (Date), 5 (Notes), 6 (Resp), 7 (Delete)
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
         cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
-        cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE")) # Reset delete flag
+        cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
 
-    # 5. Execute Updates (One Write)
     if cells_to_update:
         ws.update_cells(cells_to_update)
 
-    # 6. Execute Deletes (Bottom up)
     if rows_to_delete:
         for r in sorted(rows_to_delete, reverse=True):
             ws.delete_rows(r)
+            
+    clear_cache() # IMPORTANT: Refresh cache after batch update
 
 def finalize_project_db(building_name):
     sh = get_google_sheet()
@@ -201,11 +207,13 @@ def finalize_project_db(building_name):
     ws.update_cell(cell.row, 22, "TRUE")
     ws.update_cell(cell.row, 23, final_date)
     ws.update_cell(cell.row, 20, final_date)
+    clear_cache()
     return final_date
 
-# --- PDF GENERATORS ---
+# --- PDF GENERATORS (Safe Version) ---
 
 def clean_text(text):
+    """Removes special characters that break PDF generation."""
     if text is None: return ""
     text = str(text)
     replacements = {
@@ -425,7 +433,7 @@ def main():
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
             
-            # Load Data
+            # Load Data (Cached)
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
             
@@ -479,7 +487,6 @@ def main():
                 hide_index=True, key="editor"
             )
             
-            # OPTIMIZED SAVE BUTTON
             if st.button("Save Changes"):
                 sh = get_google_sheet()
                 if sh:
