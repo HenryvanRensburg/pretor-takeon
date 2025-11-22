@@ -24,10 +24,7 @@ def get_google_sheet():
         st.error(f"Connection Error. Please check Secrets. Details: {e}")
         return None
 
-# --- DATA FUNCTIONS (WITH CACHING FIX) ---
-
-# @st.cache_data tells Streamlit to hold this data in memory for 15 seconds
-# This prevents hitting the Google API Limit (Error 429)
+# --- DATA FUNCTIONS (WITH CACHING) ---
 @st.cache_data(ttl=15)
 def get_data(worksheet_name):
     sh = get_google_sheet()
@@ -41,33 +38,28 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
-            # Create sheet if missing (Auto-fix for ServiceProviders)
             if worksheet_name == "ServiceProviders":
                 try:
-                    # We can't return a DF here easily without breaking cache logic, 
-                    # but this handles the setup on first run.
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone"])
                 except:
                     return pd.DataFrame()
-            # Don't show error for master schedule read if it fails temporarily
             return pd.DataFrame()
     return pd.DataFrame()
 
 def clear_cache():
-    """Helper to force a reload after saving data"""
     st.cache_data.clear()
 
 def add_master_item(task_name, category):
     sh = get_google_sheet()
     ws = sh.worksheet("Master")
     ws.append_row([task_name, category])
-    clear_cache() # Refresh data
+    clear_cache()
 
 def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
     ws.append_row([complex_name, name, service, email, phone])
-    clear_cache() # Refresh data
+    clear_cache()
 
 def create_new_building(data_dict):
     sh = get_google_sheet()
@@ -131,7 +123,7 @@ def create_new_building(data_dict):
     if new_rows:
         ws_checklist.append_rows(new_rows)
         
-    clear_cache() # Refresh data
+    clear_cache() 
     return "SUCCESS"
 
 def update_project_agent_details(building_name, agent_name, agent_email):
@@ -145,15 +137,10 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- NEW BATCH SAVE FUNCTION ---
+# --- BATCH SAVE FUNCTION ---
 def save_checklist_batch(ws, building_name, edited_df):
-    """
-    Downloads the sheet ONCE, maps the rows, prepares all changes, 
-    and sends ONE update command. Prevents API Error.
-    """
     all_rows = ws.get_all_values()
     
-    # Map Task Name -> Row Number
     task_row_map = {}
     for idx, row in enumerate(all_rows):
         if len(row) > 1 and row[0] == building_name:
@@ -183,7 +170,6 @@ def save_checklist_batch(ws, building_name, edited_df):
             date_val = ""
             rec_val = "FALSE"
 
-        # Batch cells: Col 3 (Rec), 4 (Date), 5 (Notes), 6 (Resp), 7 (Delete)
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
@@ -197,7 +183,7 @@ def save_checklist_batch(ws, building_name, edited_df):
         for r in sorted(rows_to_delete, reverse=True):
             ws.delete_rows(r)
             
-    clear_cache() # IMPORTANT: Refresh cache after batch update
+    clear_cache() 
 
 def finalize_project_db(building_name):
     sh = get_google_sheet()
@@ -210,10 +196,9 @@ def finalize_project_db(building_name):
     clear_cache()
     return final_date
 
-# --- PDF GENERATORS (Safe Version) ---
+# --- PDF GENERATORS ---
 
 def clean_text(text):
-    """Removes special characters that break PDF generation."""
     if text is None: return ""
     text = str(text)
     replacements = {
@@ -265,7 +250,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
     
-    # Checklist Section
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -284,7 +268,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
     
-    # Service Providers Section
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
@@ -487,12 +470,12 @@ def main():
                 hide_index=True, key="editor"
             )
             
+            # OPTIMIZED SAVE BUTTON
             if st.button("Save Changes"):
                 sh = get_google_sheet()
                 if sh:
                     ws = sh.worksheet("Checklist")
                     with st.spinner("Saving changes..."):
-                        # Pass dataframe to batch function
                         save_checklist_batch(ws, b_choice, edited_df)
                     st.success("Checklist Updated!")
                     st.rerun()
@@ -558,13 +541,21 @@ def main():
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n⚠️ OUTSTANDING:\n"
-                    if pending_df.empty: body += "- None\n"
+                    
+                    if pending_df.empty: 
+                        body += "- None\n"
                     else:
                         for _, row in pending_df.iterrows():
-                            body += f"- {row['Task Name']} (Action: {row['Responsibility']})\n"
+                            # ADDED: Include Note if present
+                            note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
+                            body += f"- {row['Task Name']} (Action: {row['Responsibility']}){note_text}\n"
+                            
                     body += "\n✅ RECEIVED:\n"
                     for _, row in completed_df.iterrows():
-                        body += f"- {row['Task Name']} (Date: {row['Date Received']})\n"
+                        # ADDED: Include Note if present
+                        note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
+                        body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
+                        
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
@@ -577,7 +568,6 @@ def main():
                 if st.button("Finalize Project"):
                     if pending_df.empty:
                         date = finalize_project_db(b_choice)
-                        # Updated to include providers_df in PDF
                         pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
