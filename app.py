@@ -145,7 +145,8 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
             
         if should_copy and task:
-            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE"])
+            # Appended empty string for "Completed By" (Col 8)
+            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
     if new_rows:
         ws_checklist.append_rows(new_rows)
@@ -164,8 +165,10 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
+# --- BATCH SAVE FUNCTION ---
 def save_checklist_batch(ws, building_name, edited_df):
     all_rows = ws.get_all_values()
+    
     task_row_map = {}
     for idx, row in enumerate(all_rows):
         if len(row) > 1 and row[0] == building_name:
@@ -177,6 +180,7 @@ def save_checklist_batch(ws, building_name, edited_df):
     for i, row in edited_df.iterrows():
         task = row['Task Name']
         row_idx = task_row_map.get(task)
+
         if not row_idx: continue 
 
         if row['Delete']:
@@ -184,21 +188,32 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
+        
+        # If Checked
         if row['Received']:
+            # Auto-fill date if empty
             if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_val = current_date_in_ui
             rec_val = "TRUE"
         else:
+            # If Unchecked, clear date
             date_val = ""
             rec_val = "FALSE"
 
+        # MAPPING UPDATES TO COLUMNS:
+        # 3: Received, 4: Date, 5: Notes, 6: Responsibility, 7: Delete, 8: Completed By
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
         cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
         cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
+        
+        # Handle Completed By (Column 8)
+        # If it's in the dataframe (Internal Tracker), save it. If not (Agent Tracker), preserve or ignore.
+        if 'Completed By' in row:
+            cells_to_update.append(gspread.Cell(row_idx, 8, row['Completed By']))
 
     if cells_to_update:
         ws.update_cells(cells_to_update)
@@ -264,7 +279,6 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
 
-# UPDATED: Added building_code parameter
 def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
@@ -309,7 +323,6 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
     
-    # UPDATED REFERENCE LOGIC
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
@@ -522,8 +535,6 @@ def main():
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
             year_end = str(proj_row.get('Year End', ''))
-            
-            # EXTRACT BUILDING CODE
             building_code = str(proj_row.get('Building Code', ''))
             
             team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
@@ -558,7 +569,6 @@ def main():
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     
-                    # Pass building_code to PDF generator
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
@@ -578,32 +588,85 @@ def main():
             
             st.divider()
             
-            # --- STEP 2: CHECKLIST ---
+            # --- STEP 2: TRACK PROGRESS (TWO TABS) ---
             st.markdown("### 2. Track Progress")
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             
-            display_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Notes', 'Delete']
-            edited_df = st.data_editor(
-                items_df[display_cols],
-                column_config={
-                    "Received": st.column_config.CheckboxColumn(),
-                    "Date Received": st.column_config.TextColumn(disabled=True),
-                    "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
-                    "Delete": st.column_config.CheckboxColumn()
-                },
-                disabled=["Task Name", "Date Received"], 
-                hide_index=True, key="editor"
-            )
+            tab1, tab2 = st.tabs(["Previous Agent Tracker", "Internal Team Tracker"])
             
-            if st.button("Save Changes"):
-                sh = get_google_sheet()
-                if sh:
-                    ws = sh.worksheet("Checklist")
-                    with st.spinner("Saving changes..."):
-                        save_checklist_batch(ws, b_choice, edited_df)
-                    st.success("Checklist Updated!")
-                    st.rerun()
+            # TAB 1: AGENT TRACKER (Filtered)
+            with tab1:
+                st.caption("Items to be received from the Previous Agent")
+                # Filter: Only "Previous Agent" items AND Not Deleted
+                agent_view = items_df[
+                    (items_df['Responsibility'] == 'Previous Agent') & 
+                    (items_df['Delete'] == False)
+                ].copy()
+                
+                agent_cols = ['Task Name', 'Received', 'Date Received', 'Notes']
+                
+                edited_agent = st.data_editor(
+                    agent_view[agent_cols],
+                    column_config={
+                        "Received": st.column_config.CheckboxColumn(label="Received?"),
+                        "Date Received": st.column_config.TextColumn(disabled=True),
+                    },
+                    disabled=["Task Name"],
+                    hide_index=True,
+                    key="agent_editor"
+                )
+                
+                if st.button("Save Agent Updates"):
+                    sh = get_google_sheet()
+                    if sh:
+                        ws = sh.worksheet("Checklist")
+                        # We need to pass full row data including hidden columns like Responsibility
+                        # So we merge edits back into main dataframe logic implicitly via Task Name matching
+                        # But for batch save, we need the 'Responsibility' which is missing in this view.
+                        # Solution: Re-attach the static data from original view before saving
+                        save_df = edited_agent.copy()
+                        save_df['Responsibility'] = 'Previous Agent' # We know this because of filter
+                        save_df['Delete'] = False
+                        
+                        with st.spinner("Saving..."):
+                            save_checklist_batch(ws, b_choice, save_df)
+                        st.success("Agent Tracker Saved!")
+                        st.rerun()
+
+            # TAB 2: INTERNAL TRACKER (Full View)
+            with tab2:
+                st.caption("Full Master Tracker (Internal & External)")
+                # Show everything (including Deleted items? Usually not, but let's show all non-deleted)
+                full_view = items_df[items_df['Delete'] == False].copy()
+                
+                # Ensure 'Completed By' exists
+                if 'Completed By' not in full_view.columns:
+                    full_view['Completed By'] = ""
+                
+                full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                
+                edited_full = st.data_editor(
+                    full_view[full_cols],
+                    column_config={
+                        "Received": st.column_config.CheckboxColumn(label="Completed?"),
+                        "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                        "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
+                        "Delete": st.column_config.CheckboxColumn()
+                    },
+                    disabled=["Task Name", "Date Received"], 
+                    hide_index=True, 
+                    key="full_editor"
+                )
+                
+                if st.button("Save Internal Tracker"):
+                    sh = get_google_sheet()
+                    if sh:
+                        ws = sh.worksheet("Checklist")
+                        with st.spinner("Saving..."):
+                            save_checklist_batch(ws, b_choice, edited_full)
+                        st.success("Internal Tracker Saved!")
+                        st.rerun()
 
             st.divider()
 
