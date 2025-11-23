@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 from fpdf import FPDF
 import urllib.parse 
+import re
 
 # --- CONFIGURATION ---
 SCOPES = [
@@ -24,7 +26,7 @@ def get_google_sheet():
         st.error(f"Connection Error. Please check Secrets. Details: {e}")
         return None
 
-# --- DATA FUNCTIONS (WITH CACHING) ---
+# --- DATA FUNCTIONS ---
 @st.cache_data(ttl=15)
 def get_data(worksheet_name):
     sh = get_google_sheet()
@@ -62,7 +64,6 @@ def add_service_provider(complex_name, name, service, email, phone):
     clear_cache()
 
 def update_service_provider_date(complex_name, provider_name):
-    """Updates the Date Emailed column for a specific provider."""
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
     try:
@@ -163,10 +164,8 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- BATCH SAVE FUNCTION ---
 def save_checklist_batch(ws, building_name, edited_df):
     all_rows = ws.get_all_values()
-    
     task_row_map = {}
     for idx, row in enumerate(all_rows):
         if len(row) > 1 and row[0] == building_name:
@@ -178,7 +177,6 @@ def save_checklist_batch(ws, building_name, edited_df):
     for i, row in edited_df.iterrows():
         task = row['Task Name']
         row_idx = task_row_map.get(task)
-
         if not row_idx: continue 
 
         if row['Delete']:
@@ -235,36 +233,117 @@ def clean_text(text):
         text = text.replace(char, repl)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date):
+def calculate_financial_periods(take_on_date_str, year_end_str):
+    """
+    Calculates the last 5 financial years and the current partial year
+    based on the Take On Date and Year End string (e.g., "28 February").
+    """
+    try:
+        take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        
+        # Try to parse month from Year End string (e.g. "28 February")
+        months = {
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+        }
+        ye_month = 2 # Default Feb
+        for m_name, m_val in months.items():
+            if m_name in year_end_str.lower():
+                ye_month = m_val
+                break
+        
+        # Calculate Start of Current Financial Year
+        # If Take On is March (3) and Year End is Feb (2), Year Start was March 1st of current year (if passed) or prev year
+        
+        current_fin_year_start = take_on_date.replace(day=1, month=ye_month) + relativedelta(days=1)
+        # If the Calculated Start is in the future relative to Take On, subtract a year
+        if current_fin_year_start > take_on_date:
+            current_fin_year_start -= relativedelta(years=1)
+            
+        # Generate strings
+        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {take_on_date.strftime('%d %B %Y')}"
+        
+        # Past 5 Years
+        past_years = []
+        for i in range(1, 6):
+            y_end = current_fin_year_start - relativedelta(days=1) - relativedelta(years=i-1)
+            past_years.append(f"Financial Year Ending: {y_end.strftime('%d %B %Y')}")
+            
+        # Bank Statements (1 Month Prior)
+        bank_start = take_on_date - relativedelta(months=1)
+        bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
+        
+        return current_period_str, past_years, bank_str
+        
+    except Exception as e:
+        return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
+
+def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, txt=clean_text(f"HANDOVER REQUEST: {building_name}"), ln=1, align='C')
+    pdf.set_font("Arial", 'B', 12)
+    
+    # Header
+    pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
     
-    pdf.set_font("Arial", size=11)
-    letter_text = (
+    # Formal Appointment Text
+    pdf.set_font("Arial", size=10)
+    intro = (
         f"ATTENTION: {agent_name}\n\n"
-        f"RE: APPOINTMENT OF PRETOR GROUP AS MANAGING AGENTS\n\n"
-        f"Please be advised that Pretor Group has been appointed as the Managing Agents "
-        f"for {building_name} effective from {take_on_date}.\n\n"
-        f"In order to facilitate a smooth transition, kindly provide us with the documentation "
-        f"and information listed in the schedule below. Please check off items as they are included."
+        f"We confirm that we have been appointed as Managing Agents of {building_name} effective from {take_on_date}.\n"
+        f"In terms of this appointment, we request you to make all documentation in your possession pertaining to "
+        f"{building_name} available for collection by us."
     )
-    pdf.multi_cell(0, 7, clean_text(letter_text))
-    pdf.ln(10)
+    pdf.multi_cell(0, 5, clean_text(intro))
+    pdf.ln(5)
+    
+    # --- DYNAMIC FINANCIALS SECTION ---
+    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
     
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(140, 10, "Required Item / Document", 1)
-    pdf.cell(40, 10, "Included?", 1)
-    pdf.ln()
+    pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
+    pdf.set_font("Arial", size=9)
     
-    pdf.set_font("Arial", size=10)
-    for item in master_items:
-        pdf.cell(140, 10, clean_text(str(item)[:65]), 1)
-        pdf.cell(40, 10, "", 1)
-        pdf.ln()
+    # 1. Dynamic Financial Items
+    pdf.cell(5, 5, "-", ln=0)
+    pdf.multi_cell(0, 5, clean_text(curr_fin))
+    
+    for year_str in past_years:
+        pdf.cell(5, 5, "-", ln=0)
+        pdf.multi_cell(0, 5, clean_text(f"Historic Records: {year_str}"))
         
+    # 2. Dynamic Bank Item
+    pdf.cell(5, 5, "-", ln=0)
+    pdf.multi_cell(0, 5, clean_text(bank_req))
+    
+    # 3. Standard Checklist Items (Filtered)
+    for item in master_items:
+        pdf.cell(5, 5, "-", ln=0)
+        pdf.multi_cell(0, 5, clean_text(str(item)))
+        
+    pdf.ln(5)
+    
+    # --- BANKING DETAILS SECTION ---
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
+    pdf.set_font("Arial", size=9)
+    
+    banking_info = (
+        "Account Name: Pretor Group (Pty) Ltd\n"
+        "Bank: First National Bank\n"
+        "Branch: Pretoria (251445)\n"
+        "Account Number: 514 242 794 08\n"
+        "Reference: [Please use Building Code]"
+    )
+    pdf.multi_cell(0, 5, clean_text(banking_info))
+    
+    pdf.ln(5)
+    pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
+    pdf.cell(0, 5, "Yours faithfully,", ln=1)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 5, "PRETOR GROUP", ln=1)
+    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -391,7 +470,7 @@ def main():
             l4, l5, l6 = st.columns(3)
             vat_num = l4.text_input("VAT Number")
             tax_num = l5.text_input("Tax Number")
-            year_end = l6.text_input("Year End")
+            year_end = l6.text_input("Year End (e.g. 28 February)")
             
             l7, l8 = st.columns(2)
             auditor = l7.text_input("Auditor")
@@ -457,25 +536,22 @@ def main():
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
-            
-            # Team Details
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
+            year_end = str(proj_row.get('Year End', ''))
             
             # Build CC String
             team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
             cc_string = ",".join(team_emails)
             
-            # Display Team Info
             with st.expander("ℹ️ Pretor Team Details", expanded=False):
                 c1, c2, c3 = st.columns(3)
                 c1.write(f"**Manager:** {assigned_manager}\n{manager_email}")
                 c2.write(f"**Assistant:** {str(proj_row.get('Assistant Name',''))}\n{assistant_email}")
                 c3.write(f"**Bookkeeper:** {str(proj_row.get('Bookkeeper Name',''))}\n{bookkeeper_email}")
             
-            # Load Data (Cached)
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
             
@@ -496,23 +572,23 @@ def main():
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
                     
-                    # UPDATED: Filter out items marked as Pretor Group responsibility
-                    # Default assumption: If it's not "Pretor Group", it's for the agent.
+                    # Filter out Pretor items for PDF
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     
-                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date)
+                    # Updated PDF Generator Call (includes year_end)
+                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
+                    
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
                     body = (f"Dear {agent_name},\n\nPlease accept this email as confirmation that Pretor Group has been appointed "
                             f"as Managing Agents for {b_choice} effective from {take_on_date}.\n\n"
                             f"Please find attached our formal handover checklist.\n\n"
                             f"Regards,\nPretor Group")
+                    
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
-                    
-                    # Add CC to Agent Email as well (Optional, but consistent)
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     
                     link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
@@ -576,7 +652,6 @@ def main():
                 provider_list = providers_df['Provider Name'].tolist()
                 selected_provider = st.selectbox("Select Provider to Email", provider_list)
                 
-                # DISPLAY SEND STATUS
                 prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
                 sent_date = str(prov_data['Date Emailed'])
                 p_mail = str(prov_data['Email'])
@@ -600,13 +675,10 @@ def main():
                                 
                                 safe_subject = urllib.parse.quote(subj)
                                 safe_body = urllib.parse.quote(body)
-                                
-                                # CC logic included
                                 cc_param = f"&cc={cc_string}" if cc_string else ""
                                 
                                 link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
                                 st.markdown(link, unsafe_allow_html=True)
-                                
                                 st.rerun()
                         else:
                             st.error("This provider has no email address saved.")
@@ -633,10 +705,7 @@ def main():
                         subject = f"URGENT: Outstanding Handover Items - {b_choice}"
                         safe_subject = urllib.parse.quote(subject)
                         safe_body = urllib.parse.quote(body)
-                        
-                        # CC Logic
                         cc_param = f"&cc={cc_string}" if cc_string else ""
-                        
                         link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
             
@@ -676,10 +745,7 @@ def main():
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
                     safe_emails = client_email.replace(";", ",")
-                    
-                    # CC Logic
                     cc_param = f"&cc={cc_string}" if cc_string else ""
-                    
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
 
