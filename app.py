@@ -169,6 +169,7 @@ def create_new_building(data_dict):
     # 1. ADD CALCULATED FINANCIAL ITEMS
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
+    # Append columns: 1=Name, 2=Task, 3=Rec, 4=Date, 5=Notes, 6=Resp, 7=Delete, 8=CompletedBy
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     for p_year in past_years:
         new_rows.append([data_dict["Complex Name"], f"Historic Records: {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
@@ -185,7 +186,6 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
             
         if should_copy and task:
-            # Empty strings for Date (4), Notes (5), Delete (7), Completed By (8)
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
     if new_rows:
@@ -205,8 +205,8 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- BATCH SAVE FUNCTION (UPDATED FOR AUTO-COMPLETION) ---
-def save_checklist_batch(ws, building_name, edited_df, current_user_name=None):
+# --- BATCH SAVE FUNCTION (UPDATED FOR DROPDOWN) ---
+def save_checklist_batch(ws, building_name, edited_df):
     all_rows = ws.get_all_values()
     task_row_map = {}
     for idx, row in enumerate(all_rows):
@@ -225,32 +225,31 @@ def save_checklist_batch(ws, building_name, edited_df, current_user_name=None):
             rows_to_delete.append(row_idx)
             continue
 
-        # --- AUTO-COMPLETION LOGIC ---
-        # Get existing values from UI dataframe
-        ui_date = str(row['Date Received']).strip()
-        ui_user = str(row.get('Completed By', '')).strip()
+        current_date_in_ui = str(row['Date Received']).strip()
+        # This now comes from the Selectbox (Dropdown)
+        current_user_in_ui = str(row.get('Completed By', '')).strip()
         
         if row['Received']:
-            # 1. Handle Date: If missing, use today
-            if not ui_date or ui_date == "None" or ui_date == "":
+            # 1. Auto-Date
+            if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
-                date_val = ui_date
+                date_val = current_date_in_ui
             
-            # 2. Handle Completed By: If missing and user provided name, use that
-            if (not ui_user or ui_user == "None" or ui_user == "") and current_user_name:
-                user_val = current_user_name
+            # 2. User (Dropdown value)
+            if current_user_in_ui and current_user_in_ui != "None":
+                user_val = current_user_in_ui
             else:
-                user_val = ui_user
+                user_val = "" # Or leave blank if they didn't select anyone
                 
             rec_val = "TRUE"
         else:
-            # If unchecked, clear date and user
+            # Unchecked -> Clear date and user
             date_val = ""
             user_val = ""
             rec_val = "FALSE"
 
-        # Prepare cells: 3=Received, 4=Date, 5=Notes, 6=Resp, 7=Delete, 8=Completed By
+        # Map cells: 3=Rec, 4=Date, 5=Notes, 6=Resp, 7=Delete, 8=CompletedBy
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
@@ -532,21 +531,28 @@ def main():
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
+            
+            # Team Details
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
+            assistant_name = str(proj_row.get('Assistant Name', ''))
             assistant_email = str(proj_row.get('Assistant Email', ''))
+            bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
             
+            # Build Team List for Dropdown
+            team_list = [name for name in [assigned_manager, assistant_name, bookkeeper_name] if name and name != "None"]
+            # Build CC String
             team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
             cc_string = ",".join(team_emails)
             
             with st.expander("ℹ️ Pretor Team Details", expanded=False):
                 c1, c2, c3 = st.columns(3)
                 c1.write(f"**Manager:** {assigned_manager}\n{manager_email}")
-                c2.write(f"**Assistant:** {str(proj_row.get('Assistant Name',''))}\n{assistant_email}")
-                c3.write(f"**Bookkeeper:** {str(proj_row.get('Bookkeeper Name',''))}\n{bookkeeper_email}")
+                c2.write(f"**Assistant:** {assistant_name}\n{assistant_email}")
+                c3.write(f"**Bookkeeper:** {bookkeeper_name}\n{bookkeeper_email}")
             
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
@@ -590,15 +596,15 @@ def main():
             
             st.divider()
             
-            # --- STEP 2: TRACK PROGRESS (TWO TABS) ---
+            # --- STEP 2: TRACK PROGRESS (VIEW TOGGLE TO PREVENT RESET BUG) ---
             st.markdown("### 2. Track Progress")
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             
-            tab1, tab2 = st.tabs(["Previous Agent Tracker", "Internal Team Tracker"])
+            # VIEW SELECTOR (Using radio with key for state persistence)
+            view_choice = st.radio("Select View:", ["Previous Agent Tracker", "Internal Team Tracker"], horizontal=True, key="view_selector")
             
-            # TAB 1: AGENT TRACKER
-            with tab1:
+            if view_choice == "Previous Agent Tracker":
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[
                     (items_df['Responsibility'] == 'Previous Agent') & 
@@ -625,22 +631,16 @@ def main():
                         save_df = edited_agent.copy()
                         save_df['Responsibility'] = 'Previous Agent'
                         save_df['Delete'] = False
-                        
+                        # Pass explicit None for user since Agent view doesn't set users
                         with st.spinner("Saving..."):
                             save_checklist_batch(ws, b_choice, save_df)
                         st.success("Agent Tracker Saved!")
                         st.rerun()
 
-            # TAB 2: INTERNAL TRACKER
-            with tab2:
+            else: # INTERNAL TRACKER
                 st.caption("Full Master Tracker (Internal & External)")
-                
-                # USER INPUT FOR "COMPLETED BY"
-                current_user = st.text_input("👤 Enter your name to sign off tasks:", placeholder="e.g. John Doe")
-                
                 full_view = items_df[items_df['Delete'] == False].copy()
-                if 'Completed By' not in full_view.columns:
-                    full_view['Completed By'] = ""
+                if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
                 
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 
@@ -651,24 +651,26 @@ def main():
                         "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
                         "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
                         "Delete": st.column_config.CheckboxColumn(),
-                        "Completed By": st.column_config.TextColumn(disabled=True) # Read only, filled by code
+                        # UPDATED DROPDOWN LOGIC
+                        "Completed By": st.column_config.SelectboxColumn(
+                            "Completed By",
+                            options=team_list,
+                            required=False
+                        )
                     },
-                    disabled=["Task Name", "Date Received", "Completed By"], 
+                    disabled=["Task Name", "Date Received"], 
                     hide_index=True, 
                     key="full_editor"
                 )
                 
                 if st.button("Save Internal Tracker"):
-                    if not current_user:
-                        st.warning("⚠️ Please enter your name in the box above before saving.")
-                    else:
-                        sh = get_google_sheet()
-                        if sh:
-                            ws = sh.worksheet("Checklist")
-                            with st.spinner("Saving..."):
-                                save_checklist_batch(ws, b_choice, edited_full, current_user_name=current_user)
-                            st.success(f"Internal Tracker Saved by {current_user}!")
-                            st.rerun()
+                    sh = get_google_sheet()
+                    if sh:
+                        ws = sh.worksheet("Checklist")
+                        with st.spinner("Saving..."):
+                            save_checklist_batch(ws, b_choice, edited_full)
+                        st.success("Internal Tracker Saved!")
+                        st.rerun()
 
             st.divider()
 
@@ -726,7 +728,6 @@ def main():
                                 
                                 link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
                                 st.markdown(link, unsafe_allow_html=True)
-                                
                                 st.rerun()
                         else:
                             st.error("This provider has no email address saved.")
