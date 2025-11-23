@@ -26,7 +26,7 @@ def get_google_sheet():
         st.error(f"Connection Error. Please check Secrets. Details: {e}")
         return None
 
-# --- DATA FUNCTIONS ---
+# --- DATA FUNCTIONS (WITH CACHING) ---
 @st.cache_data(ttl=15)
 def get_data(worksheet_name):
     sh = get_google_sheet()
@@ -234,60 +234,45 @@ def clean_text(text):
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 def calculate_financial_periods(take_on_date_str, year_end_str):
-    """
-    Calculates the last 5 financial years and the current partial year
-    based on the Take On Date and Year End string (e.g., "28 February").
-    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
-        
-        # Try to parse month from Year End string (e.g. "28 February")
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 # Default Feb
+        ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in year_end_str.lower():
                 ye_month = m_val
                 break
         
-        # Calculate Start of Current Financial Year
-        # If Take On is March (3) and Year End is Feb (2), Year Start was March 1st of current year (if passed) or prev year
-        
         current_fin_year_start = take_on_date.replace(day=1, month=ye_month) + relativedelta(days=1)
-        # If the Calculated Start is in the future relative to Take On, subtract a year
         if current_fin_year_start > take_on_date:
             current_fin_year_start -= relativedelta(years=1)
             
-        # Generate strings
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {take_on_date.strftime('%d %B %Y')}"
         
-        # Past 5 Years
         past_years = []
         for i in range(1, 6):
             y_end = current_fin_year_start - relativedelta(days=1) - relativedelta(years=i-1)
             past_years.append(f"Financial Year Ending: {y_end.strftime('%d %B %Y')}")
             
-        # Bank Statements (1 Month Prior)
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
         return current_period_str, past_years, bank_str
-        
     except Exception as e:
         return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
 
-def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end):
+# UPDATED: Added building_code parameter
+def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
     
-    # Header
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
     
-    # Formal Appointment Text
     pdf.set_font("Arial", size=10)
     intro = (
         f"ATTENTION: {agent_name}\n\n"
@@ -298,14 +283,12 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
-    # --- DYNAMIC FINANCIALS SECTION ---
     curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     
-    # 1. Dynamic Financial Items
     pdf.cell(5, 5, "-", ln=0)
     pdf.multi_cell(0, 5, clean_text(curr_fin))
     
@@ -313,28 +296,26 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(f"Historic Records: {year_str}"))
         
-    # 2. Dynamic Bank Item
     pdf.cell(5, 5, "-", ln=0)
     pdf.multi_cell(0, 5, clean_text(bank_req))
     
-    # 3. Standard Checklist Items (Filtered)
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
         
     pdf.ln(5)
     
-    # --- BANKING DETAILS SECTION ---
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
     
+    # UPDATED REFERENCE LOGIC
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
         "Branch: Pretoria (251445)\n"
         "Account Number: 514 242 794 08\n"
-        "Reference: [Please use Building Code]"
+        f"Reference: S{building_code}12005X"
     )
     pdf.multi_cell(0, 5, clean_text(banking_info))
     
@@ -470,7 +451,7 @@ def main():
             l4, l5, l6 = st.columns(3)
             vat_num = l4.text_input("VAT Number")
             tax_num = l5.text_input("Tax Number")
-            year_end = l6.text_input("Year End (e.g. 28 February)")
+            year_end = l6.text_input("Year End")
             
             l7, l8 = st.columns(2)
             auditor = l7.text_input("Auditor")
@@ -542,7 +523,9 @@ def main():
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
             year_end = str(proj_row.get('Year End', ''))
             
-            # Build CC String
+            # EXTRACT BUILDING CODE
+            building_code = str(proj_row.get('Building Code', ''))
+            
             team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
             cc_string = ",".join(team_emails)
             
@@ -572,12 +555,11 @@ def main():
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
                     
-                    # Filter out Pretor items for PDF
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     
-                    # Updated PDF Generator Call (includes year_end)
-                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end)
+                    # Pass building_code to PDF generator
+                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
                     
@@ -679,6 +661,7 @@ def main():
                                 
                                 link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
                                 st.markdown(link, unsafe_allow_html=True)
+                                
                                 st.rerun()
                         else:
                             st.error("This provider has no email address saved.")
