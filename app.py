@@ -84,7 +84,6 @@ def update_service_provider_date(complex_name, provider_name):
     return False
 
 def calculate_financial_periods(take_on_date_str, year_end_str):
-    """Calculates financial periods. Returns tuple: (current_str, list_of_past_years, bank_str)"""
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
         months = {
@@ -113,7 +112,6 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
         
         return current_period_str, past_years, bank_str
     except Exception as e:
-        # Fallback if dates are invalid
         return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
 
 def create_new_building(data_dict):
@@ -168,20 +166,15 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # --- 1. ADD CALCULATED FINANCIAL ITEMS ---
+    # 1. ADD CALCULATED FINANCIAL ITEMS
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
-    # Add Current Year Item
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
-    
-    # Add Past 5 Years Items
     for p_year in past_years:
         new_rows.append([data_dict["Complex Name"], f"Historic Records: {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
-        
-    # Add Bank Item
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
-    # --- 2. ADD MASTER SCHEDULE ITEMS ---
+    # 2. ADD MASTER SCHEDULE ITEMS
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -192,6 +185,7 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
             
         if should_copy and task:
+            # Empty strings for Date (4), Notes (5), Delete (7), Completed By (8)
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
     if new_rows:
@@ -211,7 +205,8 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-def save_checklist_batch(ws, building_name, edited_df):
+# --- BATCH SAVE FUNCTION (UPDATED FOR AUTO-COMPLETION) ---
+def save_checklist_batch(ws, building_name, edited_df, current_user_name=None):
     all_rows = ws.get_all_values()
     task_row_map = {}
     for idx, row in enumerate(all_rows):
@@ -230,24 +225,38 @@ def save_checklist_batch(ws, building_name, edited_df):
             rows_to_delete.append(row_idx)
             continue
 
-        current_date_in_ui = str(row['Date Received']).strip()
+        # --- AUTO-COMPLETION LOGIC ---
+        # Get existing values from UI dataframe
+        ui_date = str(row['Date Received']).strip()
+        ui_user = str(row.get('Completed By', '')).strip()
+        
         if row['Received']:
-            if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
+            # 1. Handle Date: If missing, use today
+            if not ui_date or ui_date == "None" or ui_date == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
-                date_val = current_date_in_ui
+                date_val = ui_date
+            
+            # 2. Handle Completed By: If missing and user provided name, use that
+            if (not ui_user or ui_user == "None" or ui_user == "") and current_user_name:
+                user_val = current_user_name
+            else:
+                user_val = ui_user
+                
             rec_val = "TRUE"
         else:
+            # If unchecked, clear date and user
             date_val = ""
+            user_val = ""
             rec_val = "FALSE"
 
+        # Prepare cells: 3=Received, 4=Date, 5=Notes, 6=Resp, 7=Delete, 8=Completed By
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
         cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
         cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
-        if 'Completed By' in row:
-            cells_to_update.append(gspread.Cell(row_idx, 8, row['Completed By']))
+        cells_to_update.append(gspread.Cell(row_idx, 8, user_val))
 
     if cells_to_update:
         ws.update_cells(cells_to_update)
@@ -282,7 +291,7 @@ def clean_text(text):
         text = text.replace(char, repl)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, building_code):
+def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
@@ -300,11 +309,12 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
+    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     
-    # Loop through ALL items (The dynamic financial items are now IN this list)
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
@@ -561,8 +571,7 @@ def main():
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     
-                    # Removed year_end arg, added building_code
-                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, building_code)
+                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
                     
@@ -625,8 +634,11 @@ def main():
             # TAB 2: INTERNAL TRACKER
             with tab2:
                 st.caption("Full Master Tracker (Internal & External)")
-                full_view = items_df[items_df['Delete'] == False].copy()
                 
+                # USER INPUT FOR "COMPLETED BY"
+                current_user = st.text_input("👤 Enter your name to sign off tasks:", placeholder="e.g. John Doe")
+                
+                full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns:
                     full_view['Completed By'] = ""
                 
@@ -638,21 +650,25 @@ def main():
                         "Received": st.column_config.CheckboxColumn(label="Completed?"),
                         "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
                         "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
-                        "Delete": st.column_config.CheckboxColumn()
+                        "Delete": st.column_config.CheckboxColumn(),
+                        "Completed By": st.column_config.TextColumn(disabled=True) # Read only, filled by code
                     },
-                    disabled=["Task Name", "Date Received"], 
+                    disabled=["Task Name", "Date Received", "Completed By"], 
                     hide_index=True, 
                     key="full_editor"
                 )
                 
                 if st.button("Save Internal Tracker"):
-                    sh = get_google_sheet()
-                    if sh:
-                        ws = sh.worksheet("Checklist")
-                        with st.spinner("Saving..."):
-                            save_checklist_batch(ws, b_choice, edited_full)
-                        st.success("Internal Tracker Saved!")
-                        st.rerun()
+                    if not current_user:
+                        st.warning("⚠️ Please enter your name in the box above before saving.")
+                    else:
+                        sh = get_google_sheet()
+                        if sh:
+                            ws = sh.worksheet("Checklist")
+                            with st.spinner("Saving..."):
+                                save_checklist_batch(ws, b_choice, edited_full, current_user_name=current_user)
+                            st.success(f"Internal Tracker Saved by {current_user}!")
+                            st.rerun()
 
             st.divider()
 
