@@ -83,6 +83,39 @@ def update_service_provider_date(complex_name, provider_name):
         st.error(f"Error updating provider date: {e}")
     return False
 
+def calculate_financial_periods(take_on_date_str, year_end_str):
+    """Calculates financial periods. Returns tuple: (current_str, list_of_past_years, bank_str)"""
+    try:
+        take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        months = {
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+        }
+        ye_month = 2 
+        for m_name, m_val in months.items():
+            if m_name in str(year_end_str).lower():
+                ye_month = m_val
+                break
+        
+        current_fin_year_start = take_on_date.replace(day=1, month=ye_month) + relativedelta(days=1)
+        if current_fin_year_start > take_on_date:
+            current_fin_year_start -= relativedelta(years=1)
+            
+        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {take_on_date.strftime('%d %B %Y')}"
+        
+        past_years = []
+        for i in range(1, 6):
+            y_end = current_fin_year_start - relativedelta(days=1) - relativedelta(years=i-1)
+            past_years.append(f"Financial Year Ending: {y_end.strftime('%d %B %Y')}")
+            
+        bank_start = take_on_date - relativedelta(months=1)
+        bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
+        
+        return current_period_str, past_years, bank_str
+    except Exception as e:
+        # Fallback if dates are invalid
+        return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
+
 def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -135,6 +168,20 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
+    # --- 1. ADD CALCULATED FINANCIAL ITEMS ---
+    curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    
+    # Add Current Year Item
+    new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    
+    # Add Past 5 Years Items
+    for p_year in past_years:
+        new_rows.append([data_dict["Complex Name"], f"Historic Records: {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+        
+    # Add Bank Item
+    new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
+
+    # --- 2. ADD MASTER SCHEDULE ITEMS ---
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -145,7 +192,6 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
             
         if should_copy and task:
-            # Appended empty string for "Completed By" (Col 8)
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
     if new_rows:
@@ -165,10 +211,8 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- BATCH SAVE FUNCTION ---
 def save_checklist_batch(ws, building_name, edited_df):
     all_rows = ws.get_all_values()
-    
     task_row_map = {}
     for idx, row in enumerate(all_rows):
         if len(row) > 1 and row[0] == building_name:
@@ -180,7 +224,6 @@ def save_checklist_batch(ws, building_name, edited_df):
     for i, row in edited_df.iterrows():
         task = row['Task Name']
         row_idx = task_row_map.get(task)
-
         if not row_idx: continue 
 
         if row['Delete']:
@@ -188,30 +231,21 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
-        
-        # If Checked
         if row['Received']:
-            # Auto-fill date if empty
             if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_val = current_date_in_ui
             rec_val = "TRUE"
         else:
-            # If Unchecked, clear date
             date_val = ""
             rec_val = "FALSE"
 
-        # MAPPING UPDATES TO COLUMNS:
-        # 3: Received, 4: Date, 5: Notes, 6: Responsibility, 7: Delete, 8: Completed By
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
         cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
         cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
-        
-        # Handle Completed By (Column 8)
-        # If it's in the dataframe (Internal Tracker), save it. If not (Agent Tracker), preserve or ignore.
         if 'Completed By' in row:
             cells_to_update.append(gspread.Cell(row_idx, 8, row['Completed By']))
 
@@ -248,38 +282,7 @@ def clean_text(text):
         text = text.replace(char, repl)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-def calculate_financial_periods(take_on_date_str, year_end_str):
-    try:
-        take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
-        months = {
-            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
-            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
-        }
-        ye_month = 2 
-        for m_name, m_val in months.items():
-            if m_name in year_end_str.lower():
-                ye_month = m_val
-                break
-        
-        current_fin_year_start = take_on_date.replace(day=1, month=ye_month) + relativedelta(days=1)
-        if current_fin_year_start > take_on_date:
-            current_fin_year_start -= relativedelta(years=1)
-            
-        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {take_on_date.strftime('%d %B %Y')}"
-        
-        past_years = []
-        for i in range(1, 6):
-            y_end = current_fin_year_start - relativedelta(days=1) - relativedelta(years=i-1)
-            past_years.append(f"Financial Year Ending: {y_end.strftime('%d %B %Y')}")
-            
-        bank_start = take_on_date - relativedelta(months=1)
-        bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
-        
-        return current_period_str, past_years, bank_str
-    except Exception as e:
-        return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
-
-def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
+def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, building_code):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
@@ -297,22 +300,11 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
-    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     
-    pdf.cell(5, 5, "-", ln=0)
-    pdf.multi_cell(0, 5, clean_text(curr_fin))
-    
-    for year_str in past_years:
-        pdf.cell(5, 5, "-", ln=0)
-        pdf.multi_cell(0, 5, clean_text(f"Historic Records: {year_str}"))
-        
-    pdf.cell(5, 5, "-", ln=0)
-    pdf.multi_cell(0, 5, clean_text(bank_req))
-    
+    # Loop through ALL items (The dynamic financial items are now IN this list)
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
@@ -569,7 +561,8 @@ def main():
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     
-                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
+                    # Removed year_end arg, added building_code
+                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
                     
@@ -595,10 +588,9 @@ def main():
             
             tab1, tab2 = st.tabs(["Previous Agent Tracker", "Internal Team Tracker"])
             
-            # TAB 1: AGENT TRACKER (Filtered)
+            # TAB 1: AGENT TRACKER
             with tab1:
                 st.caption("Items to be received from the Previous Agent")
-                # Filter: Only "Previous Agent" items AND Not Deleted
                 agent_view = items_df[
                     (items_df['Responsibility'] == 'Previous Agent') & 
                     (items_df['Delete'] == False)
@@ -621,12 +613,8 @@ def main():
                     sh = get_google_sheet()
                     if sh:
                         ws = sh.worksheet("Checklist")
-                        # We need to pass full row data including hidden columns like Responsibility
-                        # So we merge edits back into main dataframe logic implicitly via Task Name matching
-                        # But for batch save, we need the 'Responsibility' which is missing in this view.
-                        # Solution: Re-attach the static data from original view before saving
                         save_df = edited_agent.copy()
-                        save_df['Responsibility'] = 'Previous Agent' # We know this because of filter
+                        save_df['Responsibility'] = 'Previous Agent'
                         save_df['Delete'] = False
                         
                         with st.spinner("Saving..."):
@@ -634,13 +622,11 @@ def main():
                         st.success("Agent Tracker Saved!")
                         st.rerun()
 
-            # TAB 2: INTERNAL TRACKER (Full View)
+            # TAB 2: INTERNAL TRACKER
             with tab2:
                 st.caption("Full Master Tracker (Internal & External)")
-                # Show everything (including Deleted items? Usually not, but let's show all non-deleted)
                 full_view = items_df[items_df['Delete'] == False].copy()
                 
-                # Ensure 'Completed By' exists
                 if 'Completed By' not in full_view.columns:
                     full_view['Completed By'] = ""
                 
