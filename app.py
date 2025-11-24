@@ -40,6 +40,7 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
+            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
@@ -189,7 +190,9 @@ def create_new_building(data_dict):
         data_dict["Assistant Email"],
         data_dict["Bookkeeper Name"],
         data_dict["Bookkeeper Email"],
-        "", "", "" 
+        "", # Col 31 (UIF)
+        "", # Col 32 (COIDA)
+        ""  # Col 33 (SARS PAYE)
     ]
     ws_projects.append_row(row_data)
     
@@ -333,7 +336,8 @@ def clean_text(text):
     text = str(text)
     replacements = {
         "\u2013": "-", "\u2014": "-", "\u2018": "'", "\u2019": "'", 
-        "\u201c": '"', "\u201d": '"', "\u2022": "*"
+        "\u201c": '"', "\u201d": '"', "\u2022": "*", 
+        "✅": "", "⚠️": "", "🔄": "", "🆕": "" # Remove emojis for PDF safety
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
@@ -421,6 +425,44 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.output(filename)
     return filename
 
+# --- NEW: WEEKLY REPORT PDF GENERATOR ---
+def generate_weekly_report_pdf(summary_list):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, txt=clean_text(f"Weekly Take-On Overview"), ln=1, align='C')
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 10, txt=clean_text(f"Date: {datetime.now().strftime('%Y-%m-%d')}"), ln=1, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", 'B', 10)
+    # Header
+    pdf.cell(60, 10, "Complex Name", 1)
+    pdf.cell(40, 10, "Manager", 1)
+    pdf.cell(30, 10, "Status", 1)
+    pdf.cell(20, 10, "Prog.", 1)
+    pdf.cell(40, 10, "Pending Items", 1)
+    pdf.ln()
+    
+    pdf.set_font("Arial", size=9)
+    for item in summary_list:
+        name = clean_text(str(item['Complex Name'])[:25])
+        mgr = clean_text(str(item['Manager'])[:18])
+        status = clean_text(item['Status'])[:15]
+        progress = f"{int(item['Progress'] * 100)}%"
+        pending = str(item['Items Pending'])
+        
+        pdf.cell(60, 10, name, 1)
+        pdf.cell(40, 10, mgr, 1)
+        pdf.cell(30, 10, status, 1)
+        pdf.cell(20, 10, progress, 1)
+        pdf.cell(40, 10, pending, 1)
+        pdf.ln()
+        
+    filename = f"Weekly_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
+    pdf.output(filename)
+    return filename
+
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
@@ -455,37 +497,26 @@ def main():
                     "Type": row['Type'],
                     "Manager": row['Assigned Manager'],
                     "Take On Date": row['Take On Date'],
-                    "Progress": progress_val, # Numeric for Progress Bar
-                    "Status": status
+                    "Progress": progress_val, 
+                    "Status": status,
+                    "Items Pending": total - received
                 })
             
             summary_df = pd.DataFrame(summary_list)
             
-            # 1. VISUAL DASHBOARD WITH PROGRESS BAR
             st.dataframe(
                 summary_df,
                 column_config={
-                    "Progress": st.column_config.ProgressColumn(
-                        "Completion %",
-                        format="%.0f%%",
-                        min_value=0,
-                        max_value=1,
-                    )
+                    "Progress": st.column_config.ProgressColumn("Completion %", format="%.0f%%", min_value=0, max_value=1)
                 },
                 hide_index=True
             )
             
-            # 2. GENERATE EMAIL SUMMARY BUTTON
-            if st.button("Generate Weekly Management Report (Email Text)"):
-                report_text = f"Weekly Take-On Overview - {datetime.now().strftime('%Y-%m-%d')}\n\n"
-                
-                for item in summary_list:
-                    perc = int(item['Progress'] * 100)
-                    report_text += f"{item['Complex Name']} ({item['Type']})\n"
-                    report_text += f"   Manager: {item['Manager']} | Start: {item['Take On Date']}\n"
-                    report_text += f"   Status: {item['Status']} ({perc}%)\n\n"
-                
-                st.text_area("Copy this text for your email:", report_text, height=300)
+            # UPDATED DASHBOARD: PDF GENERATION
+            if st.button("Download Weekly Report PDF"):
+                pdf_file = generate_weekly_report_pdf(summary_list)
+                with open(pdf_file, "rb") as f:
+                    st.download_button("⬇️ Download PDF", f, file_name=pdf_file)
                 
         else:
             st.info("No active projects found.")
