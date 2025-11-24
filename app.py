@@ -225,15 +225,19 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- CORRECTED DATE LOGIC ---
+# --- ROBUST DATE CALCULATION LOGIC ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
+    """
+    Calculates periods with the logic:
+    1. End Date = Take On Date - 1 Day (Last day of previous month)
+    2. Start Date = 1st Day of the Month FOLLOWING the Year End Month.
+       It must be the most recent occurrence <= End Date.
+    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
         
-        # 1. Calculate Request End Date (Last day of previous month)
-        # e.g., Take On = 1 Dec 2025 -> Request End = 30 Nov 2025
-        first_of_take_on = take_on_date.replace(day=1)
-        request_end_date = first_of_take_on - timedelta(days=1) 
+        # 1. Request End Date = Day before Take On
+        request_end_date = take_on_date - timedelta(days=1)
         
         # 2. Parse Year End Month
         months = {
@@ -246,44 +250,34 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
                 ye_month = m_val
                 break
         
-        # 3. Calculate Current Financial Year Start
-        # Start Date is always 1st of Month AFTER Year End.
-        # We must find the most recent FY Start that is BEFORE the request_end_date.
-        
+        # 3. Determine Start Month (Year End Month + 1)
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
         
-        # Try Start Date in the same year as Request End Date
+        # 4. Find the correct Year for the Start Date
+        # We create a start date in the same year as the Request End Date
         candidate_year = request_end_date.year
+        candidate_start = datetime(candidate_year, start_month, 1)
         
-        # If request_end_date is Jan/Feb, but FY Start is Mar, then the FY started in prev year.
-        if start_month > request_end_date.month:
-             candidate_year -= 1
-        
-        # Construct the start date: 1st of [Start Month] [Correct Year]
-        current_fin_year_start = datetime(candidate_year, start_month, 1)
-        
-        # Safety check: If start date > end date (shouldn't happen with logic above), fix it
-        if current_fin_year_start > request_end_date:
-            current_fin_year_start -= relativedelta(years=1)
+        # If candidate start is in the future relative to end date, it must be previous year
+        if candidate_start > request_end_date:
+            candidate_start = candidate_start - relativedelta(years=1)
+            
+        current_fin_year_start = candidate_start
             
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
-        # 4. Calculate Past 5 Years
-        # We work backwards from the Current Start Date.
-        # The "Historic Year End" is exactly 1 day before the "Current Start".
-        
+        # 5. Calculate Past 5 Years (Backwards from Current Start)
+        # The "Historic Year End" is the day before the Current Start
         past_years = []
-        # Point to the end of the last completed financial year
-        pointer_date = current_fin_year_start - timedelta(days=1) 
+        pointer_date = current_fin_year_start - timedelta(days=1)
         
         for i in range(5):
-            # pointer_date is the Year End Date (e.g. 28 Feb)
             past_years.append(pointer_date.strftime('%d %B %Y'))
-            # Move back exactly 1 year to the previous year end
+            # Move back exactly 1 year
             pointer_date = pointer_date - relativedelta(years=1)
             
-        # 5. Bank Statements: 1 Month prior to Take On (Start of that month)
+        # 6. Bank Statements (1 Month Prior)
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -291,6 +285,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
 
+# UPDATED: create_new_building
 def create_new_building(data_dict, has_arrears):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -353,7 +348,6 @@ def create_new_building(data_dict, has_arrears):
     
     # 1. Financial Items
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
-    
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
     for p_year in past_years:
@@ -362,7 +356,7 @@ def create_new_building(data_dict, has_arrears):
     
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
-    # 2. ARREARS
+    # 2. ARREARS ITEMS
     if has_arrears:
         arrears_tasks = [
             "Arrears: List of all debt already handed over to attorneys",
@@ -448,7 +442,6 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
-        
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
 
@@ -527,7 +520,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    # Use DB items
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -535,6 +528,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
     pdf.ln(5)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -1266,14 +1260,7 @@ def main():
                 st.markdown("#### 🏛️ SARS Department Handover")
                 st.info("Notify the SARS department about the new complex registration.")
                 
-                # Always check settings first
-                settings_df = get_data("Settings")
-                sars_email_setting = ""
-                if not settings_df.empty:
-                    row = settings_df[settings_df['Department'] == 'SARS']
-                    if not row.empty: sars_email_setting = row.iloc[0]['Email']
-
-                # If already sent, show success + reset option
+                # Logic: Check sent date.
                 if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                     st.success(f"✅ SARS email sent on {sars_sent_date}")
                     with st.expander("Need to resend?"):
@@ -1281,14 +1268,22 @@ def main():
                             update_sars_status(b_choice, reset=True)
                             st.rerun()
                 else:
-                    # Show input form if not sent
+                    # Get settings or fallback
+                    settings_df = get_data("Settings")
+                    sars_email_setting = ""
+                    if not settings_df.empty:
+                        # Case-insensitive lookup
+                        row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
+                        if not row.empty: sars_email_setting = row.iloc[0]['Email']
+                    
                     if sars_email_setting:
-                        st.caption(f"Sending to: {sars_email_setting}")
                         final_sars_email = sars_email_setting
+                        st.caption(f"Sending to: {final_sars_email}")
                     else:
                         st.warning("⚠️ SARS Department Email not set in Global Settings.")
                         final_sars_email = st.text_input("Enter SARS Dept Email here:", placeholder="tax@pretor.co.za")
 
+                    # Only show button if we have an email
                     if final_sars_email:
                         has_tax_num = tax_number and tax_number != "None" and tax_number != ""
                         if has_tax_num:
@@ -1313,7 +1308,10 @@ def main():
                                 link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
                                 st.markdown(link, unsafe_allow_html=True)
                                 st.success("Marked as sent! Click link above.")
+                    else:
+                        st.info("Please enter an email address to proceed.")
 
+            st.markdown("---")
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
