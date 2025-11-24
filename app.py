@@ -27,7 +27,7 @@ def get_google_sheet():
         return None
 
 # --- DATA FUNCTIONS (WITH CACHING) ---
-@st.cache_data(ttl=10) # Reduced TTL for faster updates
+@st.cache_data(ttl=10) 
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
@@ -191,6 +191,30 @@ def create_new_building(data_dict):
     clear_cache() 
     return "SUCCESS"
 
+# --- NEW: DYNAMIC UPDATE FUNCTION FOR BUILDING DETAILS ---
+def update_building_details_batch(complex_name, updates):
+    sh = get_google_sheet()
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1) # Get all headers to find column indices
+        
+        cells_to_update = []
+        
+        for col_name, new_value in updates.items():
+            if new_value and col_name in headers:
+                col_index = headers.index(col_name) + 1
+                cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
+        
+        if cells_to_update:
+            ws.update_cells(cells_to_update)
+            clear_cache()
+            return True
+    except Exception as e:
+        st.error(f"Update failed: {e}")
+    return False
+
 def update_project_agent_details(building_name, agent_name, agent_email):
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
@@ -202,7 +226,6 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- BATCH SAVE FUNCTION (CRASH PROOF) ---
 def save_checklist_batch(ws, building_name, edited_df):
     all_rows = ws.get_all_values()
     task_row_map = {}
@@ -218,48 +241,32 @@ def save_checklist_batch(ws, building_name, edited_df):
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
 
-        # Delete Logic
         if row['Delete']:
             rows_to_delete.append(row_idx)
             continue
 
-        # Get UI values
         current_date_in_ui = str(row['Date Received']).strip()
         
-        # Safely get Completed By from the dropdown
-        # Note: In agent tracker, this might be missing from view, so we check
-        if 'Completed By' in row:
-            user_val = str(row['Completed By']).strip()
-            if user_val == "None": user_val = ""
-        else:
-            user_val = "" # Default if column missing in view
+        user_val = str(row.get('Completed By', '')).strip()
+        if user_val == "None": user_val = ""
 
         if row['Received']:
-            # 1. Date Logic: If blank/none, set Today
             if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_val = current_date_in_ui
             rec_val = "TRUE"
         else:
-            # Unchecked -> Clear fields
             date_val = ""
             user_val = ""
             rec_val = "FALSE"
 
-        # Map Updates
-        # 3: Rec, 4: Date, 5: Notes, 6: Resp, 7: Del, 8: CompBy
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row.get('Notes', '')))
-        
-        # Only update Responsibility if present in view (Internal Tracker)
         if 'Responsibility' in row:
             cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
-            
         cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
-        
-        # Always update Completed By if we have a value or if we are clearing it
         cells_to_update.append(gspread.Cell(row_idx, 8, user_val))
 
     if cells_to_update:
@@ -299,8 +306,10 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
+    
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
+    
     pdf.set_font("Arial", size=10)
     intro = (
         f"ATTENTION: {agent_name}\n\n"
@@ -311,9 +320,12 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
+    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
+    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
@@ -322,6 +334,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
+    
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
@@ -330,11 +343,13 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"Reference: S{building_code}12005X"
     )
     pdf.multi_cell(0, 5, clean_text(banking_info))
+    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
+    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -345,6 +360,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
+    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -353,6 +369,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
+    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -487,6 +504,7 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
+            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
@@ -502,15 +520,38 @@ def main():
             building_code = str(proj_row.get('Building Code', ''))
             team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
             cc_string = ",".join(team_emails)
-            
-            # Team List for Dropdown
             team_list = [n for n in [assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
             
-            with st.expander("ℹ️ Pretor Team Details", expanded=False):
-                c1, c2, c3 = st.columns(3)
-                c1.write(f"**Manager:** {assigned_manager}\n{manager_email}")
-                c2.write(f"**Assistant:** {assistant_name}\n{assistant_email}")
-                c3.write(f"**Bookkeeper:** {bookkeeper_name}\n{bookkeeper_email}")
+            # --- GAP FILLING FORM (EDIT DETAILS) ---
+            with st.expander("ℹ️ View / Edit Building Details", expanded=False):
+                st.caption("Fields in GREY are locked. Fields in WHITE can be updated.")
+                with st.form("update_details_form"):
+                    # Helper to render disabled if value exists, enabled if blank
+                    def smart_input(label, col_name):
+                        val = str(proj_row.get(col_name, ''))
+                        is_locked = val != "" and val != "None"
+                        return st.text_input(label, value=val, disabled=is_locked), col_name
+
+                    c1, c2 = st.columns(2)
+                    u_vat, k_vat = smart_input("VAT Number", "VAT Number")
+                    u_tax, k_tax = smart_input("Tax Number", "Tax Number")
+                    
+                    c3, c4 = st.columns(2)
+                    u_ss, k_ss = smart_input("SS Number", "SS Number")
+                    u_csos, k_csos = smart_input("CSOS Number", "CSOS Number")
+                    
+                    c5, c6 = st.columns(2)
+                    u_aud, k_aud = smart_input("Auditor", "Auditor")
+                    u_ye, k_ye = smart_input("Year End", "Year End")
+                    
+                    if st.form_submit_button("Update Details"):
+                        updates = {
+                            k_vat: u_vat, k_tax: u_tax, k_ss: u_ss,
+                            k_csos: u_csos, k_aud: u_aud, k_ye: u_ye
+                        }
+                        if update_building_details_batch(b_choice, updates):
+                            st.success("Details updated!")
+                            st.rerun()
             
             all_items = get_data("Checklist")
             items_df = all_items[all_items['Complex Name'] == b_choice].copy()
@@ -555,8 +596,8 @@ def main():
             if view_choice == "Previous Agent Tracker":
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'] == 'Previous Agent') & (items_df['Delete'] == False)].copy()
-                # ADDED COMPLETED BY HERE TO FIX BUG
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
+                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -582,6 +623,7 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
+                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
