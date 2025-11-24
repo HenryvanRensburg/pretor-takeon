@@ -172,14 +172,11 @@ def update_sars_status(complex_name, reset=False):
         cell = ws.find(complex_name)
         row_num = cell.row
         headers = ws.row_values(1)
-        
-        # Handle missing column gracefully
-        if "SARS Sent Date" not in headers:
-            # If column is missing, add it to header? Or just error
-            st.error("Column 'SARS Sent Date' not found in Projects sheet. Please add it to Row 1.")
+        try:
+            col_date = headers.index("SARS Sent Date") + 1
+        except ValueError:
+            st.error("Please add 'SARS Sent Date' header to Projects tab.")
             return False
-            
-        col_date = headers.index("SARS Sent Date") + 1
         
         if reset:
             ws.update_cell(row_num, col_date, "") # Clear date
@@ -1114,91 +1111,87 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
-
-            # --- FULL-WIDTH SARS SECTION ---
-            st.markdown("---")
-            st.markdown("#### 🏛️ SARS Department Handover")
-            st.info("Notify the SARS department about the new complex registration.")
-            
-            # Logic: Only show success if sent. Otherwise show inputs.
-            if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
-                st.success(f"✅ SARS email sent on {sars_sent_date}")
-                with st.expander("Need to resend?"):
-                    if st.button("Reset SARS Status"):
-                        update_sars_status(b_choice, reset=True)
-                        st.rerun()
-            else:
-                # Fetch Settings
-                settings_df = get_data("Settings")
-                sars_email_setting = ""
-                if not settings_df.empty:
-                    row = settings_df[settings_df['Department'] == 'SARS']
-                    if not row.empty: sars_email_setting = row.iloc[0]['Email']
                 
-                # Determine Email to use
-                if sars_email_setting:
-                    final_sars_email = sars_email_setting
-                    st.caption(f"Sending to: {final_sars_email}")
+                # --- NEW: SARS HANDOVER SECTION ---
+                st.markdown("#### 🏛️ SARS Department Handover")
+                
+                # Logic: Check if Sent Date exists. If YES -> Show Success. If NO -> Show Form.
+                if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
+                    st.success(f"✅ SARS email sent on {sars_sent_date}")
+                    with st.expander("Need to resend?"):
+                        if st.button("Reset SARS Status"):
+                            update_sars_status(b_choice, reset=True)
+                            st.rerun()
                 else:
-                    final_sars_email = st.text_input("Enter SARS Dept Email (Not found in Settings)", placeholder="tax@pretor.co.za")
-
-                # Only proceed if we have an email
-                if final_sars_email:
-                    # Determine Tax Status
-                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
-                    if has_tax_num:
-                        sars_status_text = f"Tax Number Available: {tax_number}"
-                        st.write(f"**Status:** {sars_status_text}")
+                    # 1. Get Email from Settings
+                    settings_df = get_data("Settings")
+                    sars_email_setting = ""
+                    if not settings_df.empty:
+                        # Case-insensitive search for "SARS"
+                        row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
+                        if not row.empty: sars_email_setting = row.iloc[0]['Email']
+                    
+                    # 2. Fallback Input if not found
+                    if sars_email_setting:
+                        final_sars_email = sars_email_setting
+                        st.caption(f"Sending to: {final_sars_email}")
                     else:
-                        sars_status_text = st.radio("Select Tax Status:", 
-                            ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
-                            key="sars_radio_btn")
-                    
-                    if st.button("Draft SARS Email & Mark Sent"):
-                        if update_sars_status(b_choice):
-                            subj = f"New Complex Handover: {b_choice} - SARS Details"
-                            body = (f"Dear SARS Department,\n\n"
-                                    f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
-                                    f"Current Status: {sars_status_text}\n\n"
-                                    f"Please proceed with the necessary updates/registrations.\n\n"
-                                    f"Regards,\n{takeon_name}")
-                            
-                            safe_subj = urllib.parse.quote(subj)
-                            safe_body = urllib.parse.quote(body)
-                            link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
-                            st.markdown(link, unsafe_allow_html=True)
-                            st.success("Marked as sent! Click link above.")
-                else:
-                    st.warning("⚠️ Please enter a SARS email address to continue.")
+                        st.warning("⚠️ SARS Department Email not set in Global Settings.")
+                        final_sars_email = st.text_input("Please enter the SARS Email address here to proceed:", placeholder="tax@pretor.co.za")
 
-            # --- FINALIZE ---
-            st.markdown("---")
-            st.subheader("Finalize Project")
-            if st.button("Finalize Project"):
-                if pending_df.empty:
-                    date = finalize_project_db(b_choice)
-                    pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
-                    with open(pdf, "rb") as f:
-                        st.download_button("Download Final PDF", f, file_name=pdf)
-                    
-                    subj = f"Take-On Finalized: {b_choice}"
-                    body = (f"Dear Client,\n\n"
-                            f"We are pleased to confirm that the take-on process for {b_choice} has been successfully finalized.\n\n"
-                            f"Take-On Effective Date: {take_on_date}\n"
-                            f"Initial Documentation Requested: {date_requested}\n"
-                            f"Date Finalized: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-                            f"We trust you find the attached final report in order.\n\n"
-                            f"Regards,\n{takeon_name}\nPretor Group")
-                    
-                    safe_subj = urllib.parse.quote(subj)
-                    safe_body = urllib.parse.quote(body)
-                    cc_param = f"&cc={cc_string}" if cc_string else ""
-                    
-                    link = f'<a href="mailto:{client_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#28a745; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">✅ Send Completion Email</a>'
-                    st.markdown(link, unsafe_allow_html=True)
-                    st.balloons()
-                else:
-                    st.error(f"Cannot finalize. {len(pending_df)} items pending.")
+                    # 3. Show Button ONLY if we have an email
+                    if final_sars_email:
+                        has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                        if has_tax_num:
+                            sars_status_text = f"Tax Number Available: {tax_number}"
+                            st.write(f"**Status:** {sars_status_text}")
+                        else:
+                            sars_status_text = st.radio("Select Tax Status for Email:", 
+                                ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
+                                key="sars_radio_btn")
+                        
+                        if st.button("Draft SARS Email & Mark Sent"):
+                            if update_sars_status(b_choice):
+                                subj = f"New Complex Handover: {b_choice} - SARS Details"
+                                body = (f"Dear SARS Department,\n\n"
+                                        f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                        f"Current Status: {sars_status_text}\n\n"
+                                        f"Please proceed with the necessary updates/registrations.\n\n"
+                                        f"Regards,\n{takeon_name}")
+                                
+                                safe_subj = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Marked as sent! Click link above.")
+
+            with col2:
+                st.subheader("Finalize")
+                if st.button("Finalize Project"):
+                    if pending_df.empty:
+                        date = finalize_project_db(b_choice)
+                        pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
+                        with open(pdf, "rb") as f:
+                            st.download_button("Download Final PDF", f, file_name=pdf)
+                        
+                        subj = f"Take-On Finalized: {b_choice}"
+                        body = (f"Dear Client,\n\n"
+                                f"We are pleased to confirm that the take-on process for {b_choice} has been successfully finalized.\n\n"
+                                f"Take-On Effective Date: {take_on_date}\n"
+                                f"Initial Documentation Requested: {date_requested}\n"
+                                f"Date Finalized: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+                                f"We trust you find the attached final report in order.\n\n"
+                                f"Regards,\n{takeon_name}\nPretor Group")
+                        
+                        safe_subj = urllib.parse.quote(subj)
+                        safe_body = urllib.parse.quote(body)
+                        cc_param = f"&cc={cc_string}" if cc_string else ""
+                        
+                        link = f'<a href="mailto:{client_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#28a745; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">✅ Send Completion Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                        st.balloons()
+                    else:
+                        st.error(f"Cannot finalize. {len(pending_df)} items pending.")
 
 if __name__ == "__main__":
     main()
