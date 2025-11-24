@@ -41,6 +41,7 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
+            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
@@ -852,6 +853,7 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
+                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -876,6 +878,7 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
+                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -1054,7 +1057,6 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
-            
             st.markdown("### 6. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
@@ -1105,7 +1107,7 @@ def main():
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
                 
-                # --- SARS HANDOVER ---
+                # --- SARS HANDOVER (MOVED HERE FOR VISIBILITY) ---
                 st.markdown("#### SARS Department Handover")
                 if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                     st.success(f"✅ SARS email sent on {sars_sent_date}")
