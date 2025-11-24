@@ -27,7 +27,7 @@ def get_google_sheet():
         return None
 
 # --- DATA FUNCTIONS (WITH CACHING) ---
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=10) # Reduced TTL for faster updates
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
@@ -166,16 +166,13 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # 1. ADD CALCULATED FINANCIAL ITEMS
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
-    # Append columns: 1=Name, 2=Task, 3=Rec, 4=Date, 5=Notes, 6=Resp, 7=Delete, 8=CompletedBy
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     for p_year in past_years:
         new_rows.append([data_dict["Complex Name"], f"Historic Records: {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
-    # 2. ADD MASTER SCHEDULE ITEMS
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -205,7 +202,7 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
 
-# --- BATCH SAVE FUNCTION (UPDATED FOR DROPDOWN) ---
+# --- BATCH SAVE FUNCTION (CRASH PROOF) ---
 def save_checklist_batch(ws, building_name, edited_df):
     all_rows = ws.get_all_values()
     task_row_map = {}
@@ -221,40 +218,48 @@ def save_checklist_batch(ws, building_name, edited_df):
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
 
+        # Delete Logic
         if row['Delete']:
             rows_to_delete.append(row_idx)
             continue
 
+        # Get UI values
         current_date_in_ui = str(row['Date Received']).strip()
-        # This now comes from the Selectbox (Dropdown)
-        current_user_in_ui = str(row.get('Completed By', '')).strip()
         
+        # Safely get Completed By from the dropdown
+        # Note: In agent tracker, this might be missing from view, so we check
+        if 'Completed By' in row:
+            user_val = str(row['Completed By']).strip()
+            if user_val == "None": user_val = ""
+        else:
+            user_val = "" # Default if column missing in view
+
         if row['Received']:
-            # 1. Auto-Date
+            # 1. Date Logic: If blank/none, set Today
             if not current_date_in_ui or current_date_in_ui == "None" or current_date_in_ui == "":
                 date_val = datetime.now().strftime("%Y-%m-%d")
             else:
                 date_val = current_date_in_ui
-            
-            # 2. User (Dropdown value)
-            if current_user_in_ui and current_user_in_ui != "None":
-                user_val = current_user_in_ui
-            else:
-                user_val = "" # Or leave blank if they didn't select anyone
-                
             rec_val = "TRUE"
         else:
-            # Unchecked -> Clear date and user
+            # Unchecked -> Clear fields
             date_val = ""
             user_val = ""
             rec_val = "FALSE"
 
-        # Map cells: 3=Rec, 4=Date, 5=Notes, 6=Resp, 7=Delete, 8=CompletedBy
+        # Map Updates
+        # 3: Rec, 4: Date, 5: Notes, 6: Resp, 7: Del, 8: CompBy
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
-        cells_to_update.append(gspread.Cell(row_idx, 5, row['Notes']))
-        cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
+        cells_to_update.append(gspread.Cell(row_idx, 5, row.get('Notes', '')))
+        
+        # Only update Responsibility if present in view (Internal Tracker)
+        if 'Responsibility' in row:
+            cells_to_update.append(gspread.Cell(row_idx, 6, row['Responsibility']))
+            
         cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
+        
+        # Always update Completed By if we have a value or if we are clearing it
         cells_to_update.append(gspread.Cell(row_idx, 8, user_val))
 
     if cells_to_update:
@@ -294,10 +299,8 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
-    
     pdf.set_font("Arial", size=10)
     intro = (
         f"ATTENTION: {agent_name}\n\n"
@@ -308,22 +311,17 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
-    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
-        
     pdf.ln(5)
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
@@ -332,13 +330,11 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"Reference: S{building_code}12005X"
     )
     pdf.multi_cell(0, 5, clean_text(banking_info))
-    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
-    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -349,7 +345,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -358,7 +353,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -367,11 +361,9 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(40, 10, clean_text(str(row['Responsibility'])[:20]), 1)
         pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
-    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
-    
     if not providers_df.empty:
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(50, 10, "Provider Name", 1)
@@ -379,7 +371,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(50, 10, "Email", 1)
         pdf.cell(40, 10, "Phone", 1)
         pdf.ln()
-        
         pdf.set_font("Arial", size=9)
         for _, row in providers_df.iterrows():
             pdf.cell(50, 10, clean_text(str(row['Provider Name'])[:25]), 1)
@@ -390,7 +381,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     else:
         pdf.set_font("Arial", 'I', 10)
         pdf.cell(0, 10, "No service providers recorded.", ln=1)
-        
     filename = clean_text(f"{building_name}_Report.pdf")
     pdf.output(filename)
     return filename
@@ -436,78 +426,50 @@ def main():
             b_type = col2.selectbox("Type", ["Body Corporate", "HOA"])
             client_email = st.text_input("Client Email(s) (Comma separated)")
             prev_agent = st.text_input("Previous Agents")
-            
             c1, c2 = st.columns(2)
             take_on_date = c1.date_input("Take On Date", datetime.today())
             units = c2.number_input("No of Units", min_value=1, step=1)
-            
             st.write("### Pretor Team")
             c3, c4 = st.columns(2)
             assigned_mgr = c3.text_input("Portfolio Manager Name")
             mgr_email = c4.text_input("Portfolio Manager Email")
-            
             c5, c6 = st.columns(2)
             assist_name = c5.text_input("Portfolio Assistant Name")
             assist_email = c6.text_input("Portfolio Assistant Email")
-            
             c7, c8 = st.columns(2)
             book_name = c7.text_input("Bookkeeper Name")
             book_email = c8.text_input("Bookkeeper Email")
-            
             st.write("### Financial & Legal")
             fees = st.text_input("Management Fees (Excl VAT)")
-            
             l1, l2, l3 = st.columns(3)
             erf_no = l1.text_input("Erf No")
             ss_num = l2.text_input("SS Number (BC Only)")
             csos_num = l3.text_input("CSOS Registration Number")
-            
             l4, l5, l6 = st.columns(3)
             vat_num = l4.text_input("VAT Number")
             tax_num = l5.text_input("Tax Number")
             year_end = l6.text_input("Year End")
-            
             l7, l8 = st.columns(2)
             auditor = l7.text_input("Auditor")
             last_audit = l8.text_input("Last Audit Available (Year)")
-            
             st.write("### System & Documentation")
             s1, s2 = st.columns(2)
             build_code = s1.text_input("Building Code")
             exp_code = s2.text_input("Expense Code")
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
-            
             submitted = st.form_submit_button("Create Complex")
-            
             if submitted:
                 if complex_name:
                     data = {
-                        "Complex Name": complex_name,
-                        "Type": b_type,
-                        "Client Email": client_email,
-                        "Previous Agents": prev_agent,
-                        "Take On Date": take_on_date,
-                        "No of Units": units,
-                        "Mgmt Fees": fees,
-                        "Erf No": erf_no,
-                        "SS Number": ss_num,
-                        "CSOS Number": csos_num,
-                        "VAT Number": vat_num,
-                        "Tax Number": tax_num,
-                        "Year End": year_end,
-                        "Auditor": auditor,
-                        "Last Audit Year": last_audit,
-                        "Building Code": build_code,
-                        "Expense Code": exp_code,
-                        "Physical Address": phys_address,
-                        "Assigned Manager": assigned_mgr,
-                        "Manager Email": mgr_email, 
-                        "Assistant Name": assist_name,
-                        "Assistant Email": assist_email,
-                        "Bookkeeper Name": book_name,
-                        "Bookkeeper Email": book_email,
-                        "Date Doc Requested": date_req
+                        "Complex Name": complex_name, "Type": b_type, "Client Email": client_email,
+                        "Previous Agents": prev_agent, "Take On Date": take_on_date, "No of Units": units,
+                        "Mgmt Fees": fees, "Erf No": erf_no, "SS Number": ss_num, "CSOS Number": csos_num,
+                        "VAT Number": vat_num, "Tax Number": tax_num, "Year End": year_end, "Auditor": auditor,
+                        "Last Audit Year": last_audit, "Building Code": build_code, "Expense Code": exp_code,
+                        "Physical Address": phys_address, "Assigned Manager": assigned_mgr, "Manager Email": mgr_email, 
+                        "Assistant Name": assist_name, "Assistant Email": assist_email, "Bookkeeper Name": book_name,
+                        "Bookkeeper Email": book_email, "Date Doc Requested": date_req
                     }
                     result = create_new_building(data)
                     if result == "SUCCESS":
@@ -525,14 +487,11 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
-            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
-            
-            # Team Details
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
             assistant_name = str(proj_row.get('Assistant Name', ''))
@@ -541,12 +500,11 @@ def main():
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
-            
-            # Build Team List for Dropdown
-            team_list = [name for name in [assigned_manager, assistant_name, bookkeeper_name] if name and name != "None"]
-            # Build CC String
             team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
             cc_string = ",".join(team_emails)
+            
+            # Team List for Dropdown
+            team_list = [n for n in [assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
             
             with st.expander("ℹ️ Pretor Team Details", expanded=False):
                 c1, c2, c3 = st.columns(3)
@@ -563,67 +521,52 @@ def main():
             else:
                 providers_df = pd.DataFrame()
             
-            # --- STEP 1: PREVIOUS AGENT HANDOVER ---
             st.markdown("### 1. Previous Agent Handover Request")
             col_a, col_b = st.columns(2)
             agent_name = col_a.text_input("Previous Agent Name", value=saved_agent_name)
             agent_email = col_b.text_input("Previous Agent Email", value=saved_agent_email)
-            
             if st.button("Save & Generate Request"):
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
-                    
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
-                    
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
-                    
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
                     body = (f"Dear {agent_name},\n\nPlease accept this email as confirmation that Pretor Group has been appointed "
                             f"as Managing Agents for {b_choice} effective from {take_on_date}.\n\n"
                             f"Please find attached our formal handover checklist.\n\n"
                             f"Regards,\nPretor Group")
-                    
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
                     cc_param = f"&cc={cc_string}" if cc_string else ""
-                    
                     link = f'<a href="mailto:{agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">📧 Open Email Draft to Agent</a>'
                     st.markdown(link, unsafe_allow_html=True)
-            
             st.divider()
             
-            # --- STEP 2: TRACK PROGRESS (VIEW TOGGLE TO PREVENT RESET BUG) ---
             st.markdown("### 2. Track Progress")
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             
-            # VIEW SELECTOR (Using radio with key for state persistence)
             view_choice = st.radio("Select View:", ["Previous Agent Tracker", "Internal Team Tracker"], horizontal=True, key="view_selector")
             
             if view_choice == "Previous Agent Tracker":
                 st.caption("Items to be received from the Previous Agent")
-                agent_view = items_df[
-                    (items_df['Responsibility'] == 'Previous Agent') & 
-                    (items_df['Delete'] == False)
-                ].copy()
-                
-                agent_cols = ['Task Name', 'Received', 'Date Received', 'Notes']
-                
+                agent_view = items_df[(items_df['Responsibility'] == 'Previous Agent') & (items_df['Delete'] == False)].copy()
+                # ADDED COMPLETED BY HERE TO FIX BUG
+                if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
+                agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
                     column_config={
                         "Received": st.column_config.CheckboxColumn(label="Received?"),
                         "Date Received": st.column_config.TextColumn(disabled=True),
+                        "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                     },
-                    disabled=["Task Name"],
-                    hide_index=True,
-                    key="agent_editor"
+                    disabled=["Task Name", "Date Received"], hide_index=True, key="agent_editor"
                 )
-                
                 if st.button("Save Agent Updates"):
                     sh = get_google_sheet()
                     if sh:
@@ -631,19 +574,15 @@ def main():
                         save_df = edited_agent.copy()
                         save_df['Responsibility'] = 'Previous Agent'
                         save_df['Delete'] = False
-                        # Pass explicit None for user since Agent view doesn't set users
                         with st.spinner("Saving..."):
                             save_checklist_batch(ws, b_choice, save_df)
                         st.success("Agent Tracker Saved!")
                         st.rerun()
-
-            else: # INTERNAL TRACKER
+            else:
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
-                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
-                
                 edited_full = st.data_editor(
                     full_view[full_cols],
                     column_config={
@@ -651,18 +590,10 @@ def main():
                         "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
                         "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
                         "Delete": st.column_config.CheckboxColumn(),
-                        # UPDATED DROPDOWN LOGIC
-                        "Completed By": st.column_config.SelectboxColumn(
-                            "Completed By",
-                            options=team_list,
-                            required=False
-                        )
+                        "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                     },
-                    disabled=["Task Name", "Date Received"], 
-                    hide_index=True, 
-                    key="full_editor"
+                    disabled=["Task Name", "Date Received"], hide_index=True, key="full_editor"
                 )
-                
                 if st.button("Save Internal Tracker"):
                     sh = get_google_sheet()
                     if sh:
@@ -671,12 +602,9 @@ def main():
                             save_checklist_batch(ws, b_choice, edited_full)
                         st.success("Internal Tracker Saved!")
                         st.rerun()
-
-            st.divider()
-
-            # --- STEP 3: SERVICE PROVIDERS ---
-            st.markdown("### 3. Service Providers")
             
+            st.divider()
+            st.markdown("### 3. Service Providers")
             with st.expander("Add New Service Provider", expanded=False):
                 with st.form("add_provider"):
                     p_name = st.text_input("Provider Company Name")
@@ -684,7 +612,6 @@ def main():
                     c1, c2 = st.columns(2)
                     p_email = c1.text_input("Email Address")
                     p_phone = c2.text_input("Telephone Number")
-                    
                     if st.form_submit_button("Add Provider"):
                         if p_name and p_service:
                             add_service_provider(b_choice, p_name, p_service, p_email, p_phone)
@@ -692,19 +619,15 @@ def main():
                             st.rerun()
                         else:
                             st.error("Name and Service Type are required.")
-            
             if not providers_df.empty:
                 st.write("Current Providers:")
                 st.dataframe(providers_df[["Provider Name", "Service Type", "Email", "Phone", "Date Emailed"]], hide_index=True)
-                
                 st.markdown("#### Send Appointment Notice")
                 provider_list = providers_df['Provider Name'].tolist()
                 selected_provider = st.selectbox("Select Provider to Email", provider_list)
-                
                 prov_data = providers_df[providers_df['Provider Name'] == selected_provider].iloc[0]
                 sent_date = str(prov_data['Date Emailed'])
                 p_mail = str(prov_data['Email'])
-                
                 if sent_date and sent_date != "None" and sent_date != "":
                     st.success(f"✅ Email confirmation sent to {selected_provider} on: {sent_date}")
                     st.info("To resend, clear the date in the Google Sheet.")
@@ -721,11 +644,9 @@ def main():
                                         f"Your Portfolio Manager is {assigned_manager} ({manager_email}). Please direct future correspondence regarding "
                                         f"service delivery and invoicing to them.\n\n"
                                         f"Regards,\nPretor Group")
-                                
                                 safe_subject = urllib.parse.quote(subj)
                                 safe_body = urllib.parse.quote(body)
                                 cc_param = f"&cc={cc_string}" if cc_string else ""
-                                
                                 link = f'<a href="mailto:{p_mail}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Email for {selected_provider}</a>'
                                 st.markdown(link, unsafe_allow_html=True)
                                 st.rerun()
@@ -733,13 +654,10 @@ def main():
                             st.error("This provider has no email address saved.")
             else:
                 st.caption("No providers loaded yet.")
-
-            st.divider()
             
-            # --- STEP 4: AGENT FOLLOW-UP ---
+            st.divider()
             st.markdown("### 4. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'] == 'Previous Agent')]
-            
             if agent_pending_df.empty:
                 st.success("✅ No outstanding items marked for Previous Agent.")
             else:
@@ -759,12 +677,10 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
-            
-            # --- STEP 5: REPORTS ---
+            st.markdown("### 5. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
-            
             with col1:
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
@@ -778,7 +694,6 @@ def main():
                     for _, row in completed_df.iterrows():
                         note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                         body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
-                        
                     body += "\n📋 SERVICE PROVIDERS STATUS:\n"
                     if providers_df.empty:
                         body += "- None loaded yet\n"
@@ -789,7 +704,6 @@ def main():
                             date_sent = str(row['Date Emailed'])
                             status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
                             body += f"- {service}: {name} [{status}]\n"
-
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
@@ -797,7 +711,6 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
-
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
