@@ -79,24 +79,17 @@ def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, i
     ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
-# NEW: Function to delete an employee
 def delete_employee(complex_name, name, surname):
     sh = get_google_sheet()
     ws = sh.worksheet("Employees")
     try:
-        # Get all data to find the correct row index
         rows = ws.get_all_values()
         row_to_delete = None
-        
-        # Iterate (start from 1 to skip header if using 0-index logic, but gspread rows are 1-based)
         for idx, row in enumerate(rows):
-            # Check if Complex, Name, and Surname match
-            # Row indices: 0=Complex, 1=Name, 2=Surname
             if len(row) > 2:
                 if row[0] == complex_name and row[1] == name and row[2] == surname:
-                    row_to_delete = idx + 1 # gspread uses 1-based indexing
+                    row_to_delete = idx + 1
                     break
-        
         if row_to_delete:
             ws.delete_rows(row_to_delete)
             clear_cache()
@@ -441,14 +434,48 @@ def main():
     choice = st.sidebar.selectbox("Menu", menu)
     
     if choice == "Dashboard":
-        st.subheader("Active Projects Overview")
+        st.subheader("Active Projects Dashboard")
         df = get_data("Projects")
-        if not df.empty:
-            display_cols = ["Complex Name", "Type", "Assigned Manager", "Take On Date", "Is_Finalized"]
-            available_cols = [c for c in display_cols if c in df.columns]
-            st.dataframe(df[available_cols])
+        checklist = get_data("Checklist")
+        
+        if not df.empty and not checklist.empty:
+            summary_list = []
+            # Calculate Progress per Building
+            for index, row in df.iterrows():
+                c_name = row['Complex Name']
+                # Filter items for this building
+                c_items = checklist[checklist['Complex Name'] == c_name]
+                # Exclude deleted items from calculation
+                valid_items = c_items[c_items['Delete'] != 'TRUE']
+                
+                total = len(valid_items)
+                # Count received
+                received = len(valid_items[valid_items['Received'] == 'TRUE'])
+                
+                if total > 0:
+                    progress = (received / total) * 100
+                else:
+                    progress = 0
+                
+                # Determine Status Text
+                if progress == 100: status = "✅ Fully Completed"
+                elif progress > 80: status = "⚠️ Near Completion"
+                elif progress > 20: status = "🔄 In Progress"
+                else: status = "🆕 Just Started"
+                
+                summary_list.append({
+                    "Complex Name": c_name,
+                    "Type": row['Type'],
+                    "Portfolio Manager": row['Assigned Manager'],
+                    "Take On Date": row['Take On Date'],
+                    "Progress": f"{progress:.1f}%",
+                    "Status": status,
+                    "Items Pending": total - received
+                })
+            
+            st.dataframe(pd.DataFrame(summary_list))
         else:
-            st.info("No projects found.")
+            st.info("No active projects found.")
 
     elif choice == "Master Schedule":
         st.subheader("Master Checklist Template")
@@ -535,6 +562,7 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
+            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
@@ -801,12 +829,10 @@ def main():
             
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
-                # DELETE EMPLOYEE OPTION
                 st.markdown("#### Remove Employee")
                 emp_options = [f"{row['Name']} {row['Surname']}" for _, row in employees_df.iterrows()]
                 to_delete = st.selectbox("Select Employee to Remove", emp_options, key="del_emp_select")
                 if st.button("Delete Selected Employee"):
-                    # Parse name back
                     parts = to_delete.split(" ", 1)
                     if len(parts) == 2:
                         if delete_employee(b_choice, parts[0], parts[1]):
@@ -865,7 +891,6 @@ def main():
                             status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
                             body += f"- {service}: {name} [{status}]\n"
                     
-                    # NEW: EMPLOYEE LOGIC
                     if not employees_df.empty:
                         body += "\n👥 EMPLOYEE TAKEOVER STATUS:\n"
                         for _, row in employees_df.iterrows():
