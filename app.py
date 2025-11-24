@@ -7,6 +7,7 @@ from dateutil.relativedelta import relativedelta
 from fpdf import FPDF
 import urllib.parse 
 import re
+import os
 
 # --- CONFIGURATION ---
 SCOPES = [
@@ -120,55 +121,29 @@ def update_service_provider_date(complex_name, provider_name):
     return False
 
 def calculate_financial_periods(take_on_date_str, year_end_str):
-    """
-    Calculates financial periods with corrected logic:
-    - To Date = Take On Date - 1 day
-    - Start Date = 1st of month following Year End
-    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
-        
-        # 1. Determine "To Date" (Day before Take On)
-        period_end_date = take_on_date - relativedelta(days=1)
-        
-        # 2. Determine Year End Month
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 # Default Feb
+        ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
         
-        # 3. Determine Start of Current Financial Year
-        # The FY starts on the 1st of the month AFTER the Year End month
-        start_month = ye_month + 1
-        if start_month > 12: start_month = 1
-        
-        # Create a candidate start date in the same year as Take On
-        candidate_start = take_on_date.replace(month=start_month, day=1)
-        
-        # If the candidate start is in the future (relative to period_end), 
-        # then the FY started the previous year.
-        if candidate_start > period_end_date:
-            current_fin_year_start = candidate_start - relativedelta(years=1)
-        else:
-            current_fin_year_start = candidate_start
+        current_fin_year_start = take_on_date.replace(day=1, month=ye_month) + relativedelta(days=1)
+        if current_fin_year_start > take_on_date:
+            current_fin_year_start -= relativedelta(years=1)
             
-        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {period_end_date.strftime('%d %B %Y')}"
+        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {take_on_date.strftime('%d %B %Y')}"
         
-        # 4. Calculate Past 5 Years (Financial)
         past_years = []
         for i in range(1, 6):
-            # The end of the previous year is the day before the current start
-            # We move back i-1 years from the current start to find the relevant FY end
-            fy_start_ref = current_fin_year_start - relativedelta(years=i-1)
-            fy_end_date = fy_start_ref - relativedelta(days=1)
-            past_years.append(fy_end_date.strftime('%d %B %Y'))
+            y_end = current_fin_year_start - relativedelta(days=1) - relativedelta(years=i-1)
+            past_years.append(f"Financial Year Ending: {y_end.strftime('%d %B %Y')}")
             
-        # 5. Bank Statements: 1 Month prior to Take On
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -233,21 +208,14 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # --- 1. ADD DYNAMIC FINANCIAL ITEMS (Expanded) ---
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
-    # Current Year
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
-    
-    # Past 5 Years (Double Entries)
     for p_year in past_years:
         new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
         new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
-        
-    # Bank Statements
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
-    # --- 2. ADD MASTER ITEMS ---
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -372,17 +340,28 @@ def clean_text(text):
     text = str(text)
     replacements = {
         "\u2013": "-", "\u2014": "-", "\u2018": "'", "\u2019": "'", 
-        "\u201c": '"', "\u201d": '"', "\u2022": "*"
+        "\u201c": '"', "\u201d": '"', "\u2022": "*", 
+        "✅": "", "⚠️": "", "🔄": "", "🆕": ""
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
+def add_logo_to_pdf(pdf):
+    # Standard Logo Placement
+    try:
+        if os.path.exists("pretor_logo.png"):
+            pdf.image("pretor_logo.png", 10, 8, 40)
+            pdf.ln(15)
+    except:
+        pass
+
 def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 12)
+    add_logo_to_pdf(pdf)
     
+    pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
     
@@ -396,8 +375,6 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
-    # Dynamic items are now ALREADY in master_items (via DB), so no need to recalc here
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -405,7 +382,6 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
-        
     pdf.ln(5)
     
     pdf.set_font("Arial", 'B', 10)
@@ -434,6 +410,8 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
 def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf = FPDF()
     pdf.add_page()
+    add_logo_to_pdf(pdf)
+    
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
@@ -486,11 +464,14 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
 def generate_weekly_report_pdf(summary_list):
     pdf = FPDF()
     pdf.add_page()
+    add_logo_to_pdf(pdf)
+    
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"Weekly Take-On Overview"), ln=1, align='C')
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 10, txt=clean_text(f"Date: {datetime.now().strftime('%Y-%m-%d')}"), ln=1, align='C')
     pdf.ln(10)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(60, 10, "Complex Name", 1)
     pdf.cell(40, 10, "Manager", 1)
@@ -498,6 +479,7 @@ def generate_weekly_report_pdf(summary_list):
     pdf.cell(20, 10, "Prog.", 1)
     pdf.cell(40, 10, "Pending Items", 1)
     pdf.ln()
+    
     pdf.set_font("Arial", size=9)
     for item in summary_list:
         name = clean_text(str(item['Complex Name'])[:25])
@@ -505,12 +487,14 @@ def generate_weekly_report_pdf(summary_list):
         status = clean_text(item['Status'])[:15]
         progress = f"{int(item['Progress'] * 100)}%"
         pending = str(item['Items Pending'])
+        
         pdf.cell(60, 10, name, 1)
         pdf.cell(40, 10, mgr, 1)
         pdf.cell(30, 10, status, 1)
         pdf.cell(20, 10, progress, 1)
         pdf.cell(40, 10, pending, 1)
         pdf.ln()
+        
     filename = f"Weekly_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
     pdf.output(filename)
     return filename
@@ -518,6 +502,11 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
+    # SIDEBAR LOGO
+    if os.path.exists("pretor_logo.png"):
+        st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings"]
@@ -654,6 +643,7 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
+            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
@@ -793,6 +783,7 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
+                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -817,6 +808,7 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
+                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -894,6 +886,7 @@ def main():
             st.divider()
             st.markdown("### 4. Employees & Payroll")
             st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
+            
             with st.expander("Add New Employee", expanded=False):
                 with st.form("add_employee"):
                     e_name = st.text_input("Name")
@@ -905,6 +898,7 @@ def main():
                     e_pay = c2.checkbox("Payslip Received?")
                     e_id_copy = c3.checkbox("ID Copy?")
                     e_bank = c4.checkbox("Bank Conf?")
+                    
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur:
                             add_employee(b_choice, e_name, e_sur, e_id, e_paye, 
@@ -914,6 +908,7 @@ def main():
                             st.rerun()
                         else:
                             st.error("Name and Surname required.")
+            
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
                 st.markdown("#### Remove Employee")
@@ -927,7 +922,7 @@ def main():
                             st.rerun()
             else:
                 st.caption("No employees loaded.")
-            
+
             st.divider()
             st.markdown("### 5. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
