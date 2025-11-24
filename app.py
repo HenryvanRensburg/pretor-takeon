@@ -143,6 +143,33 @@ def update_service_provider_date(complex_name, provider_name):
         st.error(f"Error updating provider date: {e}")
     return False
 
+def update_wages_status(complex_name, employee_count):
+    """Updates the Wages Sent Date and Wages Employee Count."""
+    sh = get_google_sheet()
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        # Assuming AJ is col 36 and AK is col 37
+        # If user added columns, we might need to find headers. For now assuming fixed based on instruction.
+        # Safer way: find headers
+        headers = ws.row_values(1)
+        try:
+            col_date = headers.index("Wages Sent Date") + 1
+            col_count = headers.index("Wages Employee Count") + 1
+        except ValueError:
+            st.error("Please add 'Wages Sent Date' and 'Wages Employee Count' headers to Projects tab.")
+            return False
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        ws.update_cell(row_num, col_date, today)
+        ws.update_cell(row_num, col_count, employee_count)
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating wages status: {e}")
+        return False
+
 def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
@@ -215,9 +242,11 @@ def create_new_building(data_dict):
         data_dict["Bookkeeper Email"],
         "", # Col 31 (UIF)
         "", # Col 32 (COIDA)
-        ""  # Col 33 (SARS PAYE)
-        ,data_dict["TakeOn Name"],
-        data_dict["TakeOn Email"]
+        "", # Col 33 (SARS PAYE)
+        data_dict["TakeOn Name"],
+        data_dict["TakeOn Email"],
+        "", # Wages Date
+        ""  # Wages Count
     ]
     ws_projects.append_row(row_data)
     
@@ -392,7 +421,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
+    # No recalc here, using DB items
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -660,6 +689,7 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
+            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
@@ -675,6 +705,11 @@ def main():
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
+            
+            # WAGES STATUS
+            wages_sent_date = str(proj_row.get('Wages Sent Date', ''))
+            wages_count_saved = str(proj_row.get('Wages Employee Count', '0'))
+            
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
             if assistant_email and assistant_email != "None": cc_list.append(assistant_email)
@@ -824,6 +859,7 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
+                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -901,7 +937,6 @@ def main():
             st.divider()
             st.markdown("### 4. Employees & Payroll")
             st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
-            
             with st.expander("Add New Employee", expanded=False):
                 with st.form("add_employee"):
                     e_name = st.text_input("Name")
@@ -913,14 +948,11 @@ def main():
                     e_pay = c2.checkbox("Payslip Received?")
                     e_id_copy = c3.checkbox("ID Copy?")
                     e_bank = c4.checkbox("Bank Conf?")
-                    
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur:
                             add_employee(b_choice, e_name, e_sur, e_id, e_paye, 
-                                         "YES" if e_con else "NO", 
-                                         "YES" if e_pay else "NO",
-                                         "YES" if e_id_copy else "NO",
-                                         "YES" if e_bank else "NO")
+                                         "YES" if e_con else "NO", "YES" if e_pay else "NO",
+                                         "YES" if e_id_copy else "NO", "YES" if e_bank else "NO")
                             st.success("Employee Added!")
                             st.rerun()
                         else:
@@ -929,48 +961,57 @@ def main():
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
                 
-                # --- NEW: WAGES EMAIL BUTTON ---
-                if st.button("Draft Wages Handover Email"):
-                    # 1. Fetch Wages Email
-                    settings_df = get_data("Settings")
-                    wages_email = ""
-                    if not settings_df.empty:
-                        # Simple lookup: find row where Department is Wages
-                        row = settings_df[settings_df['Department'] == 'Wages']
-                        if not row.empty:
-                            wages_email = row.iloc[0]['Email']
+                # WAGES EMAIL BUTTON
+                try:
+                    current_emp_count = len(employees_df)
+                    saved_count_str = wages_count_saved
+                    saved_count = int(saved_count_str) if saved_count_str and saved_count_str != "None" and saved_count_str != "" else 0
+                except:
+                    saved_count = 0
+                
+                # Logic: Show if never sent OR if new employees added
+                if saved_count == 0 or current_emp_count > saved_count:
+                    btn_label = "Draft Wages Handover Email" if saved_count == 0 else f"⚠️ New Employees Added - Send Update?"
                     
-                    if wages_email:
-                        subject = f"New Complex Take-On: {b_choice} - Employee Payroll Handover"
-                        body = (f"Dear Wages Department,\n\n"
-                                f"Please find below the list of employees for the new take-on: {b_choice}.\n\n")
+                    if st.button(btn_label):
+                        # Fetch Wages Email from Settings
+                        settings_df = get_data("Settings")
+                        wages_email = ""
+                        if not settings_df.empty:
+                            row = settings_df[settings_df['Department'] == 'Wages']
+                            if not row.empty: wages_email = row.iloc[0]['Email']
                         
-                        for _, row in employees_df.iterrows():
-                            e_name = f"{row['Name']} {row['Surname']}"
-                            e_id = str(row['ID Number'])
-                            docs = []
-                            if str(row.get('Contract Received', '')).upper() == 'YES': docs.append("Contract: YES")
-                            else: docs.append("Contract: NO")
-                            if str(row.get('Payslip Received', '')).upper() == 'YES': docs.append("Payslip: YES")
-                            else: docs.append("Payslip: NO")
-                            if str(row.get('ID Copy Received', '')).upper() == 'YES': docs.append("ID: YES")
-                            else: docs.append("ID: NO")
-                            if str(row.get('Bank Confirmation', '')).upper() == 'YES': docs.append("Bank Conf: YES")
-                            else: docs.append("Bank Conf: NO")
-                            
-                            doc_status = " | ".join(docs)
-                            body += f"- {e_name} (ID: {e_id})\n  {doc_status}\n\n"
-                        
-                        body += ("NOTE: The actual documentation (Contracts, Payslips, IDs, Bank Confirmations) "
-                                 "will be forwarded to you via a separate email.\n\n"
-                                 f"Regards,\n{takeon_name}\nPretor Group")
-                        
-                        safe_subject = urllib.parse.quote(subject)
-                        safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{wages_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Wages Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
-                    else:
-                        st.error("Wages Email not found in Global Settings.")
+                        if wages_email:
+                            if update_wages_status(b_choice, current_emp_count):
+                                subject = f"New Complex Take-On: {b_choice} - Employee Payroll Handover"
+                                body = (f"Dear Wages Department,\n\n"
+                                        f"Please find below the list of employees for the new take-on: {b_choice}.\n\n")
+                                for _, row in employees_df.iterrows():
+                                    e_name = f"{row['Name']} {row['Surname']}"
+                                    e_id = str(row['ID Number'])
+                                    docs = []
+                                    if str(row.get('Contract Received', '')).upper() == 'YES': docs.append("Contract: YES")
+                                    else: docs.append("Contract: NO")
+                                    if str(row.get('Payslip Received', '')).upper() == 'YES': docs.append("Payslip: YES")
+                                    else: docs.append("Payslip: NO")
+                                    if str(row.get('ID Copy Received', '')).upper() == 'YES': docs.append("ID: YES")
+                                    else: docs.append("ID: NO")
+                                    if str(row.get('Bank Confirmation', '')).upper() == 'YES': docs.append("Bank Conf: YES")
+                                    else: docs.append("Bank Conf: NO")
+                                    doc_status = " | ".join(docs)
+                                    body += f"- {e_name} (ID: {e_id})\n  {doc_status}\n\n"
+                                body += ("NOTE: The actual documentation (Contracts, Payslips, IDs, Bank Confirmations) "
+                                         "will be forwarded to you via a separate email.\n\n"
+                                         f"Regards,\n{takeon_name}\nPretor Group")
+                                safe_subject = urllib.parse.quote(subject)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{wages_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Wages Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status updated! Please click the link above to send the email.")
+                        else:
+                            st.error("Wages Email not found in Global Settings.")
+                else:
+                    st.success(f"✅ Wages email sent on {wages_sent_date} (Count: {saved_count})")
 
                 st.markdown("#### Remove Employee")
                 emp_options = [f"{row['Name']} {row['Surname']}" for _, row in employees_df.iterrows()]
