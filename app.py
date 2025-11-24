@@ -191,14 +191,13 @@ def create_new_building(data_dict):
     clear_cache() 
     return "SUCCESS"
 
-# --- NEW: DYNAMIC UPDATE FUNCTION FOR BUILDING DETAILS ---
 def update_building_details_batch(complex_name, updates):
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
         row_num = cell.row
-        headers = ws.row_values(1) # Get all headers to find column indices
+        headers = ws.row_values(1) 
         
         cells_to_update = []
         
@@ -306,10 +305,8 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
-    
     pdf.set_font("Arial", size=10)
     intro = (
         f"ATTENTION: {agent_name}\n\n"
@@ -319,22 +316,17 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     )
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    
     curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
     pdf.ln(5)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
@@ -343,13 +335,11 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"Reference: S{building_code}12005X"
     )
     pdf.multi_cell(0, 5, clean_text(banking_info))
-    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
-    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -360,7 +350,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -369,7 +358,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -522,32 +510,68 @@ def main():
             cc_string = ",".join(team_emails)
             team_list = [n for n in [assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
             
-            # --- GAP FILLING FORM (EDIT DETAILS) ---
+            # --- GAP FILLING FORM (EDIT ALL DETAILS) ---
             with st.expander("ℹ️ View / Edit Building Details", expanded=False):
-                st.caption("Fields in GREY are locked. Fields in WHITE can be updated.")
+                st.caption("Fields in GREY are locked (already filled). Fields in WHITE are editable.")
                 with st.form("update_details_form"):
-                    # Helper to render disabled if value exists, enabled if blank
                     def smart_input(label, col_name):
                         val = str(proj_row.get(col_name, ''))
-                        is_locked = val != "" and val != "None"
+                        is_locked = val and val.strip() != "" and val != "None"
                         return st.text_input(label, value=val, disabled=is_locked), col_name
 
+                    # Basic
+                    st.markdown("**Basic Info**")
                     c1, c2 = st.columns(2)
-                    u_vat, k_vat = smart_input("VAT Number", "VAT Number")
-                    u_tax, k_tax = smart_input("Tax Number", "Tax Number")
-                    
+                    u_type, k_type = smart_input("Type", "Type")
+                    u_prev, k_prev = smart_input("Previous Agent", "Previous Agents")
                     c3, c4 = st.columns(2)
+                    u_date, k_date = smart_input("Take On Date", "Take On Date")
+                    u_unit, k_unit = smart_input("No of Units", "No of Units")
+
+                    # Team
+                    st.markdown("**Internal Team**")
+                    c5, c6 = st.columns(2)
+                    u_mgr, k_mgr = smart_input("Manager Name", "Assigned Manager")
+                    u_mgre, k_mgre = smart_input("Manager Email", "Manager Email")
+                    c7, c8 = st.columns(2)
+                    u_ast, k_ast = smart_input("Assistant Name", "Assistant Name")
+                    u_aste, k_aste = smart_input("Assistant Email", "Assistant Email")
+                    c9, c10 = st.columns(2)
+                    u_bk, k_bk = smart_input("Bookkeeper Name", "Bookkeeper Name")
+                    u_bke, k_bke = smart_input("Bookkeeper Email", "Bookkeeper Email")
+
+                    # Financial/Legal
+                    st.markdown("**Financial & Legal**")
+                    u_fees, k_fees = smart_input("Mgmt Fees", "Mgmt Fees")
+                    l1, l2, l3 = st.columns(3)
+                    u_erf, k_erf = smart_input("Erf No", "Erf No")
                     u_ss, k_ss = smart_input("SS Number", "SS Number")
                     u_csos, k_csos = smart_input("CSOS Number", "CSOS Number")
-                    
-                    c5, c6 = st.columns(2)
-                    u_aud, k_aud = smart_input("Auditor", "Auditor")
+                    l4, l5, l6 = st.columns(3)
+                    u_vat, k_vat = smart_input("VAT Number", "VAT Number")
+                    u_tax, k_tax = smart_input("Tax Number", "Tax Number")
                     u_ye, k_ye = smart_input("Year End", "Year End")
-                    
+                    l7, l8 = st.columns(2)
+                    u_aud, k_aud = smart_input("Auditor", "Auditor")
+                    u_last, k_last = smart_input("Last Audit Year", "Last Audit Year")
+
+                    # System
+                    st.markdown("**System Info**")
+                    s1, s2 = st.columns(2)
+                    u_bcode, k_bcode = smart_input("Building Code", "Building Code")
+                    u_ecode, k_ecode = smart_input("Expense Code", "Expense Code")
+                    u_addr, k_addr = smart_input("Physical Address", "Physical Address")
+                    u_dreq, k_dreq = smart_input("Date Docs Requested", "Date Doc Requested")
+                    u_cli, k_cli = smart_input("Client Email(s)", "Client Email")
+
                     if st.form_submit_button("Update Details"):
                         updates = {
-                            k_vat: u_vat, k_tax: u_tax, k_ss: u_ss,
-                            k_csos: u_csos, k_aud: u_aud, k_ye: u_ye
+                            k_type: u_type, k_prev: u_prev, k_date: u_date, k_unit: u_unit,
+                            k_mgr: u_mgr, k_mgre: u_mgre, k_ast: u_ast, k_aste: u_aste,
+                            k_bk: u_bk, k_bke: u_bke, k_fees: u_fees, k_erf: u_erf,
+                            k_ss: u_ss, k_csos: u_csos, k_vat: u_vat, k_tax: u_tax,
+                            k_ye: u_ye, k_aud: u_aud, k_last: u_last, k_bcode: u_bcode,
+                            k_ecode: u_ecode, k_addr: u_addr, k_dreq: u_dreq, k_cli: u_cli
                         }
                         if update_building_details_batch(b_choice, updates):
                             st.success("Details updated!")
