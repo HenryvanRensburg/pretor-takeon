@@ -40,9 +40,20 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
+            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
+                except:
+                    return pd.DataFrame()
+            if worksheet_name == "Employees":
+                try:
+                    # Updated schema for Employees
+                    cols = ["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", 
+                            "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"]
+                    sh.add_worksheet("Employees", 100, 9)
+                    sh.worksheet("Employees").append_row(cols)
+                    return pd.DataFrame(columns=cols)
                 except:
                     return pd.DataFrame()
             return pd.DataFrame()
@@ -61,6 +72,13 @@ def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
     ws = sh.worksheet("ServiceProviders")
     ws.append_row([complex_name, name, service, email, phone, ""])
+    clear_cache()
+
+# UPDATED: Added id_copy and bank_conf arguments
+def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf):
+    sh = get_google_sheet()
+    ws = sh.worksheet("Employees")
+    ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
 def update_service_provider_date(complex_name, provider_name):
@@ -152,7 +170,10 @@ def create_new_building(data_dict):
         data_dict["Assistant Name"],
         data_dict["Assistant Email"],
         data_dict["Bookkeeper Name"],
-        data_dict["Bookkeeper Email"]
+        data_dict["Bookkeeper Email"],
+        "", # Col 31 (UIF)
+        "", # Col 32 (COIDA)
+        ""  # Col 33 (SARS PAYE)
     ]
     ws_projects.append_row(row_data)
     
@@ -327,7 +348,6 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     
-    # Filter applied in main() before calling this, so master_items is clean
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
@@ -432,7 +452,6 @@ def main():
             c1, c2, c3 = st.columns([3, 1, 1])
             new_task = c1.text_input("Task Name")
             category = c2.selectbox("Category", ["Both", "BC", "HOA"])
-            # UPDATED: Default Responsibility
             def_resp = c3.selectbox("Default Responsibility", ["Previous Agent", "Pretor Group", "Both"])
             if st.form_submit_button("Add Item"):
                 add_master_item(new_task, category, def_resp)
@@ -579,6 +598,12 @@ def main():
                     u_addr, k_addr = smart_input("Physical Address", "Physical Address")
                     u_dreq, k_dreq = smart_input("Date Docs Requested", "Date Doc Requested")
                     u_cli, k_cli = smart_input("Client Email(s)", "Client Email")
+                    
+                    st.markdown("**Payroll Global Info**")
+                    p1, p2, p3 = st.columns(3)
+                    u_uif, k_uif = smart_input("UIF Number", "UIF Number")
+                    u_coida, k_coida = smart_input("COIDA Number", "COIDA Number")
+                    u_paye, k_paye = smart_input("SARS PAYE Number", "SARS PAYE Number")
 
                     if st.form_submit_button("Update Details"):
                         updates = {
@@ -587,7 +612,8 @@ def main():
                             k_bk: u_bk, k_bke: u_bke, k_fees: u_fees, k_erf: u_erf,
                             k_ss: u_ss, k_csos: u_csos, k_vat: u_vat, k_tax: u_tax,
                             k_ye: u_ye, k_aud: u_aud, k_last: u_last, k_bcode: u_bcode,
-                            k_ecode: u_ecode, k_addr: u_addr, k_dreq: u_dreq, k_cli: u_cli
+                            k_ecode: u_ecode, k_addr: u_addr, k_dreq: u_dreq, k_cli: u_cli,
+                            k_uif: u_uif, k_coida: u_coida, k_paye: u_paye
                         }
                         if update_building_details_batch(b_choice, updates):
                             st.success("Details updated!")
@@ -601,6 +627,12 @@ def main():
                 providers_df = all_providers[all_providers['Complex Name'] == b_choice].copy()
             else:
                 providers_df = pd.DataFrame()
+                
+            all_employees = get_data("Employees")
+            if not all_employees.empty:
+                employees_df = all_employees[all_employees['Complex Name'] == b_choice].copy()
+            else:
+                employees_df = pd.DataFrame()
             
             st.markdown("### 1. Previous Agent Handover Request")
             col_a, col_b = st.columns(2)
@@ -610,7 +642,6 @@ def main():
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
-                    # UPDATED FILTER FOR AGENT PDF: Exclude 'Pretor Group' (Include 'Both' & 'Previous Agent')
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
@@ -636,11 +667,7 @@ def main():
             
             if view_choice == "Previous Agent Tracker":
                 st.caption("Items to be received from the Previous Agent")
-                # UPDATED FILTER FOR TRACKER: Include 'Previous Agent' AND 'Both'
-                agent_view = items_df[
-                    (items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & 
-                    (items_df['Delete'] == False)
-                ].copy()
+                agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
@@ -649,8 +676,6 @@ def main():
                     column_config={
                         "Received": st.column_config.CheckboxColumn(label="Received?"),
                         "Date Received": st.column_config.TextColumn(disabled=True),
-                        # UPDATED: Options include "Both"
-                        "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                         "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                     },
                     disabled=["Task Name", "Date Received"], hide_index=True, key="agent_editor"
@@ -660,13 +685,6 @@ def main():
                     if sh:
                         ws = sh.worksheet("Checklist")
                         save_df = edited_agent.copy()
-                        # Note: We are editing a subset. If we save, we need to ensure we don't overwrite 
-                        # the responsibility of these items with a hardcoded value if they vary (Both vs Prev Agent).
-                        # Simpler approach: Just assume the view's logic holds or rely on task name matching.
-                        # The batch saver matches by Task Name, so as long as Task Name is unique per complex, it's safe.
-                        # We assume Responsibility doesn't change here, or if it does, we'd need it in the view.
-                        # Let's rely on the existing Responsibility in the main dataframe for the save if not in view.
-                        # Actually, 'Responsibility' is NOT in agent_cols, so it won't be updated/broken.
                         save_df['Delete'] = False
                         with st.spinner("Saving..."):
                             save_checklist_batch(ws, b_choice, save_df)
@@ -751,13 +769,41 @@ def main():
                 st.caption("No providers loaded yet.")
             
             st.divider()
-            st.markdown("### 4. Agent Follow-up (Urgent)")
-            # UPDATED FILTER FOR URGENT EMAIL: Include 'Both'
-            agent_pending_df = items_df[
-                (items_df['Received'] == False) & 
-                (items_df['Delete'] == False) & 
-                (items_df['Responsibility'].isin(['Previous Agent', 'Both']))
-            ]
+            st.markdown("### 4. Employees & Payroll")
+            st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
+            
+            with st.expander("Add New Employee", expanded=False):
+                with st.form("add_employee"):
+                    e_name = st.text_input("Name")
+                    e_sur = st.text_input("Surname")
+                    e_id = st.text_input("ID Number")
+                    e_paye = st.text_input("PAYE Number")
+                    c1, c2, c3, c4 = st.columns(4)
+                    e_con = c1.checkbox("Contract Received?")
+                    e_pay = c2.checkbox("Payslip Received?")
+                    e_id_copy = c3.checkbox("ID Copy?")
+                    e_bank = c4.checkbox("Bank Conf?")
+                    
+                    if st.form_submit_button("Add Employee"):
+                        if e_name and e_sur:
+                            add_employee(b_choice, e_name, e_sur, e_id, e_paye, 
+                                         "YES" if e_con else "NO", 
+                                         "YES" if e_pay else "NO",
+                                         "YES" if e_id_copy else "NO",
+                                         "YES" if e_bank else "NO")
+                            st.success("Employee Added!")
+                            st.rerun()
+                        else:
+                            st.error("Name and Surname required.")
+            
+            if not employees_df.empty:
+                st.dataframe(employees_df, hide_index=True)
+            else:
+                st.caption("No employees loaded.")
+
+            st.divider()
+            st.markdown("### 5. Agent Follow-up (Urgent)")
+            agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
             if agent_pending_df.empty:
                 st.success("✅ No outstanding items marked for Previous Agent.")
             else:
@@ -777,7 +823,7 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
-            st.markdown("### 5. Reports & Comms")
+            st.markdown("### 6. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
