@@ -40,7 +40,6 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
-            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
@@ -190,9 +189,7 @@ def create_new_building(data_dict):
         data_dict["Assistant Email"],
         data_dict["Bookkeeper Name"],
         data_dict["Bookkeeper Email"],
-        "", # Col 31 (UIF)
-        "", # Col 32 (COIDA)
-        ""  # Col 33 (SARS PAYE)
+        "", "", "" 
     ]
     ws_projects.append_row(row_data)
     
@@ -287,7 +284,6 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
-        
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
 
@@ -434,46 +430,63 @@ def main():
     choice = st.sidebar.selectbox("Menu", menu)
     
     if choice == "Dashboard":
-        st.subheader("Active Projects Dashboard")
+        st.subheader("Active Projects Overview")
         df = get_data("Projects")
         checklist = get_data("Checklist")
         
         if not df.empty and not checklist.empty:
             summary_list = []
-            # Calculate Progress per Building
             for index, row in df.iterrows():
                 c_name = row['Complex Name']
-                # Filter items for this building
                 c_items = checklist[checklist['Complex Name'] == c_name]
-                # Exclude deleted items from calculation
                 valid_items = c_items[c_items['Delete'] != 'TRUE']
-                
                 total = len(valid_items)
-                # Count received
                 received = len(valid_items[valid_items['Received'] == 'TRUE'])
                 
-                if total > 0:
-                    progress = (received / total) * 100
-                else:
-                    progress = 0
+                progress_val = (received / total) if total > 0 else 0
                 
-                # Determine Status Text
-                if progress == 100: status = "✅ Fully Completed"
-                elif progress > 80: status = "⚠️ Near Completion"
-                elif progress > 20: status = "🔄 In Progress"
+                if progress_val == 1.0: status = "✅ Completed"
+                elif progress_val > 0.8: status = "⚠️ Near Completion"
+                elif progress_val > 0.1: status = "🔄 In Progress"
                 else: status = "🆕 Just Started"
                 
                 summary_list.append({
                     "Complex Name": c_name,
                     "Type": row['Type'],
-                    "Portfolio Manager": row['Assigned Manager'],
+                    "Manager": row['Assigned Manager'],
                     "Take On Date": row['Take On Date'],
-                    "Progress": f"{progress:.1f}%",
-                    "Status": status,
-                    "Items Pending": total - received
+                    "Progress": progress_val, # Numeric for Progress Bar
+                    "Status": status
                 })
             
-            st.dataframe(pd.DataFrame(summary_list))
+            summary_df = pd.DataFrame(summary_list)
+            
+            # 1. VISUAL DASHBOARD WITH PROGRESS BAR
+            st.dataframe(
+                summary_df,
+                column_config={
+                    "Progress": st.column_config.ProgressColumn(
+                        "Completion %",
+                        format="%.0f%%",
+                        min_value=0,
+                        max_value=1,
+                    )
+                },
+                hide_index=True
+            )
+            
+            # 2. GENERATE EMAIL SUMMARY BUTTON
+            if st.button("Generate Weekly Management Report (Email Text)"):
+                report_text = f"Weekly Take-On Overview - {datetime.now().strftime('%Y-%m-%d')}\n\n"
+                
+                for item in summary_list:
+                    perc = int(item['Progress'] * 100)
+                    report_text += f"{item['Complex Name']} ({item['Type']})\n"
+                    report_text += f"   Manager: {item['Manager']} | Start: {item['Take On Date']}\n"
+                    report_text += f"   Status: {item['Status']} ({perc}%)\n\n"
+                
+                st.text_area("Copy this text for your email:", report_text, height=300)
+                
         else:
             st.info("No active projects found.")
 
