@@ -40,7 +40,6 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
-            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
@@ -177,7 +176,7 @@ def create_new_building(data_dict):
         data_dict["Building Code"],
         data_dict["Expense Code"],
         data_dict["Physical Address"],
-        data_dict["Assigned Manager"],
+        data_dict["Assigned Manager"], # Portfolio Manager
         str(data_dict["Date Doc Requested"]),
         "", 
         data_dict["Client Email"],
@@ -185,14 +184,16 @@ def create_new_building(data_dict):
         "", 
         "", 
         "",
-        data_dict["Manager Email"],
+        data_dict["Manager Email"], # Portfolio Manager Email
         data_dict["Assistant Name"],
         data_dict["Assistant Email"],
         data_dict["Bookkeeper Name"],
         data_dict["Bookkeeper Email"],
-        "", # Col 31 (UIF)
-        "", # Col 32 (COIDA)
-        ""  # Col 33 (SARS PAYE)
+        "", # UIF
+        "", # COIDA
+        "", # SARS
+        data_dict["TakeOn Name"], # NEW COL 34
+        data_dict["TakeOn Email"] # NEW COL 35
     ]
     ws_projects.append_row(row_data)
     
@@ -287,6 +288,7 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
+        
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
 
@@ -336,8 +338,7 @@ def clean_text(text):
     text = str(text)
     replacements = {
         "\u2013": "-", "\u2014": "-", "\u2018": "'", "\u2019": "'", 
-        "\u201c": '"', "\u201d": '"', "\u2022": "*", 
-        "✅": "", "⚠️": "", "🔄": "", "🆕": "" # Remove emojis for PDF safety
+        "\u201c": '"', "\u201d": '"', "\u2022": "*"
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
@@ -425,7 +426,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.output(filename)
     return filename
 
-# --- NEW: WEEKLY REPORT PDF GENERATOR ---
 def generate_weekly_report_pdf(summary_list):
     pdf = FPDF()
     pdf.add_page()
@@ -434,16 +434,13 @@ def generate_weekly_report_pdf(summary_list):
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 10, txt=clean_text(f"Date: {datetime.now().strftime('%Y-%m-%d')}"), ln=1, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 10)
-    # Header
     pdf.cell(60, 10, "Complex Name", 1)
     pdf.cell(40, 10, "Manager", 1)
     pdf.cell(30, 10, "Status", 1)
     pdf.cell(20, 10, "Prog.", 1)
     pdf.cell(40, 10, "Pending Items", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for item in summary_list:
         name = clean_text(str(item['Complex Name'])[:25])
@@ -451,14 +448,12 @@ def generate_weekly_report_pdf(summary_list):
         status = clean_text(item['Status'])[:15]
         progress = f"{int(item['Progress'] * 100)}%"
         pending = str(item['Items Pending'])
-        
         pdf.cell(60, 10, name, 1)
         pdf.cell(40, 10, mgr, 1)
         pdf.cell(30, 10, status, 1)
         pdf.cell(20, 10, progress, 1)
         pdf.cell(40, 10, pending, 1)
         pdf.ln()
-        
     filename = f"Weekly_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
     pdf.output(filename)
     return filename
@@ -475,7 +470,6 @@ def main():
         st.subheader("Active Projects Overview")
         df = get_data("Projects")
         checklist = get_data("Checklist")
-        
         if not df.empty and not checklist.empty:
             summary_list = []
             for index, row in df.iterrows():
@@ -484,14 +478,11 @@ def main():
                 valid_items = c_items[c_items['Delete'] != 'TRUE']
                 total = len(valid_items)
                 received = len(valid_items[valid_items['Received'] == 'TRUE'])
-                
                 progress_val = (received / total) if total > 0 else 0
-                
                 if progress_val == 1.0: status = "✅ Completed"
                 elif progress_val > 0.8: status = "⚠️ Near Completion"
                 elif progress_val > 0.1: status = "🔄 In Progress"
                 else: status = "🆕 Just Started"
-                
                 summary_list.append({
                     "Complex Name": c_name,
                     "Type": row['Type'],
@@ -501,9 +492,7 @@ def main():
                     "Status": status,
                     "Items Pending": total - received
                 })
-            
             summary_df = pd.DataFrame(summary_list)
-            
             st.dataframe(
                 summary_df,
                 column_config={
@@ -511,13 +500,10 @@ def main():
                 },
                 hide_index=True
             )
-            
-            # UPDATED DASHBOARD: PDF GENERATION
             if st.button("Download Weekly Report PDF"):
                 pdf_file = generate_weekly_report_pdf(summary_list)
                 with open(pdf_file, "rb") as f:
                     st.download_button("⬇️ Download PDF", f, file_name=pdf_file)
-                
         else:
             st.info("No active projects found.")
 
@@ -549,6 +535,13 @@ def main():
             take_on_date = c1.date_input("Take On Date", datetime.today())
             units = c2.number_input("No of Units", min_value=1, step=1)
             st.write("### Pretor Team")
+            # --- UPDATED TEAM INPUTS ---
+            # Default Take-On Manager to Henry
+            c_take1, c_take2 = st.columns(2)
+            takeon_name = c_take1.text_input("Take-On Manager Name", value="Henry Janse van Rensburg")
+            takeon_email = c_take2.text_input("Take-On Manager Email")
+            
+            st.markdown("*(Leave Portfolio Manager blank if same as Take-On)*")
             c3, c4 = st.columns(2)
             assigned_mgr = c3.text_input("Portfolio Manager Name")
             mgr_email = c4.text_input("Portfolio Manager Email")
@@ -588,7 +581,8 @@ def main():
                         "Last Audit Year": last_audit, "Building Code": build_code, "Expense Code": exp_code,
                         "Physical Address": phys_address, "Assigned Manager": assigned_mgr, "Manager Email": mgr_email, 
                         "Assistant Name": assist_name, "Assistant Email": assist_email, "Bookkeeper Name": book_name,
-                        "Bookkeeper Email": book_email, "Date Doc Requested": date_req
+                        "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
+                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email # NEW FIELDS
                     }
                     result = create_new_building(data)
                     if result == "SUCCESS":
@@ -606,25 +600,41 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
-            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
+            
+            # DATA FETCHING
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
+            year_end = str(proj_row.get('Year End', ''))
+            building_code = str(proj_row.get('Building Code', ''))
+            
+            # TEAM DETAILS
+            takeon_name = str(proj_row.get('TakeOn Name', ''))
+            takeon_email = str(proj_row.get('TakeOn Email', ''))
+            
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
             assistant_name = str(proj_row.get('Assistant Name', ''))
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
-            year_end = str(proj_row.get('Year End', ''))
-            building_code = str(proj_row.get('Building Code', ''))
-            team_emails = [e for e in [manager_email, assistant_email, bookkeeper_email] if e and e != "None" and "@" in e]
-            cc_string = ",".join(team_emails)
-            team_list = [n for n in [assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
             
-            # --- GAP FILLING FORM (EDIT DETAILS) ---
+            # --- CC LOGIC ---
+            # Only add Portfolio Manager to CC if they are different from TakeOn Manager
+            cc_list = []
+            if manager_email and manager_email != "None" and manager_email != takeon_email:
+                cc_list.append(manager_email)
+            if assistant_email and assistant_email != "None": cc_list.append(assistant_email)
+            if bookkeeper_email and bookkeeper_email != "None": cc_list.append(bookkeeper_email)
+            cc_string = ",".join(cc_list)
+
+            # --- TEAM LIST FOR DROPDOWN ---
+            # Used in trackers. Include TakeOn Manager as they might sign off tasks too.
+            team_list = [n for n in [takeon_name, assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
+            
+            # --- GAP FILLING FORM ---
             with st.expander("ℹ️ View / Edit Building Details", expanded=False):
                 st.caption("Fields in GREY are locked. Fields in WHITE can be updated.")
                 with st.form("update_details_form"):
@@ -642,9 +652,13 @@ def main():
                     u_unit, k_unit = smart_input("No of Units", "No of Units")
 
                     st.markdown("**Internal Team**")
+                    c_to1, c_to2 = st.columns(2)
+                    u_to, k_to = smart_input("Take-On Manager", "TakeOn Name")
+                    u_toe, k_toe = smart_input("Take-On Email", "TakeOn Email")
+                    
                     c5, c6 = st.columns(2)
-                    u_mgr, k_mgr = smart_input("Manager Name", "Assigned Manager")
-                    u_mgre, k_mgre = smart_input("Manager Email", "Manager Email")
+                    u_mgr, k_mgr = smart_input("Portfolio Manager", "Assigned Manager")
+                    u_mgre, k_mgre = smart_input("Port. Manager Email", "Manager Email")
                     c7, c8 = st.columns(2)
                     u_ast, k_ast = smart_input("Assistant Name", "Assistant Name")
                     u_aste, k_aste = smart_input("Assistant Email", "Assistant Email")
@@ -683,11 +697,12 @@ def main():
                     if st.form_submit_button("Update Details"):
                         updates = {
                             k_type: u_type, k_prev: u_prev, k_date: u_date, k_unit: u_unit,
-                            k_mgr: u_mgr, k_mgre: u_mgre, k_ast: u_ast, k_aste: u_aste,
-                            k_bk: u_bk, k_bke: u_bke, k_fees: u_fees, k_erf: u_erf,
-                            k_ss: u_ss, k_csos: u_csos, k_vat: u_vat, k_tax: u_tax,
-                            k_ye: u_ye, k_aud: u_aud, k_last: u_last, k_bcode: u_bcode,
-                            k_ecode: u_ecode, k_addr: u_addr, k_dreq: u_dreq, k_cli: u_cli,
+                            k_to: u_to, k_toe: u_toe, k_mgr: u_mgr, k_mgre: u_mgre, 
+                            k_ast: u_ast, k_aste: u_aste, k_bk: u_bk, k_bke: u_bke, 
+                            k_fees: u_fees, k_erf: u_erf, k_ss: u_ss, k_csos: u_csos, 
+                            k_vat: u_vat, k_tax: u_tax, k_ye: u_ye, k_aud: u_aud, 
+                            k_last: u_last, k_bcode: u_bcode, k_ecode: u_ecode, 
+                            k_addr: u_addr, k_dreq: u_dreq, k_cli: u_cli,
                             k_uif: u_uif, k_coida: u_coida, k_paye: u_paye
                         }
                         if update_building_details_batch(b_choice, updates):
@@ -709,6 +724,7 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
+            # --- STEP 1: PREVIOUS AGENT HANDOVER ---
             st.markdown("### 1. Previous Agent Handover Request")
             col_a, col_b = st.columns(2)
             agent_name = col_a.text_input("Previous Agent Name", value=saved_agent_name)
@@ -722,11 +738,14 @@ def main():
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
+                    
+                    # Subject & Body from Take-On Manager
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
                     body = (f"Dear {agent_name},\n\nPlease accept this email as confirmation that Pretor Group has been appointed "
                             f"as Managing Agents for {b_choice} effective from {take_on_date}.\n\n"
                             f"Please find attached our formal handover checklist.\n\n"
-                            f"Regards,\nPretor Group")
+                            f"Regards,\n{takeon_name}\nPretor Group")
+                    
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
                     cc_param = f"&cc={cc_string}" if cc_string else ""
@@ -734,6 +753,7 @@ def main():
                     st.markdown(link, unsafe_allow_html=True)
             st.divider()
             
+            # --- STEP 2: TRACK PROGRESS ---
             st.markdown("### 2. Track Progress")
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
@@ -825,13 +845,15 @@ def main():
                             success = update_service_provider_date(b_choice, selected_provider)
                             if success:
                                 subj = f"Notice of Appointment: Pretor Group - {b_choice}"
+                                # UPDATED BODY TEXT FOR PROVIDER
                                 body = (f"Dear {selected_provider},\n\n"
                                         f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
                                         f"effective {take_on_date}.\n\n"
+                                        f"I, {takeon_name}, will be handling the handover process. Please send all take-on related documentation to me.\n\n"
+                                        f"However, your permanent Portfolio Manager for daily operations will be {assigned_manager} ({manager_email}). "
+                                        f"Please direct future correspondence regarding service delivery and invoicing to them.\n\n"
                                         f"Please update your records accordingly.\n\n"
-                                        f"Your Portfolio Manager is {assigned_manager} ({manager_email}). Please direct future correspondence regarding "
-                                        f"service delivery and invoicing to them.\n\n"
-                                        f"Regards,\nPretor Group")
+                                        f"Regards,\n{takeon_name}\nPretor Group")
                                 safe_subject = urllib.parse.quote(subj)
                                 safe_body = urllib.parse.quote(body)
                                 cc_param = f"&cc={cc_string}" if cc_string else ""
@@ -898,7 +920,7 @@ def main():
                                "Please note that the following items are still outstanding:\n\n"
                         for _, row in agent_pending_df.iterrows():
                             body += f"- {row['Task Name']}\n"
-                        body += "\nYour urgent cooperation is appreciated.\n\nRegards,\nPretor Group"
+                        body += f"\nYour urgent cooperation is appreciated.\n\nRegards,\n{takeon_name}\nPretor Group"
                         subject = f"URGENT: Outstanding Handover Items - {b_choice}"
                         safe_subject = urllib.parse.quote(subject)
                         safe_body = urllib.parse.quote(body)
@@ -951,7 +973,7 @@ def main():
                             doc_status = ", ".join(docs)
                             body += f"- {e_name}: {doc_status}\n"
 
-                    body += "\nRegards,\nPretor Group"
+                    body += f"\nRegards,\n{takeon_name}\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
                     safe_emails = client_email.replace(";", ",")
