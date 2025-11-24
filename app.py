@@ -56,7 +56,6 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=cols)
                 except:
                     return pd.DataFrame()
-            # NEW: SETTINGS SHEET
             if worksheet_name == "Settings":
                 try:
                     sh.add_worksheet("Settings", 100, 2)
@@ -109,18 +108,14 @@ def delete_employee(complex_name, name, surname):
         st.error(f"Error deleting employee: {e}")
         return False
 
-# NEW: SAVE GLOBAL SETTINGS
 def save_global_settings(settings_dict):
     sh = get_google_sheet()
     try:
         ws = sh.worksheet("Settings")
-        # Clear existing content (except header if we wanted, but easier to rewrite all)
         ws.clear()
-        # Prepare data
-        data = [["Department", "Email"]] # Header
+        data = [["Department", "Email"]] 
         for dept, email in settings_dict.items():
             data.append([dept, email])
-        # Write
         ws.update("A1", data)
         clear_cache()
         return True
@@ -397,7 +392,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    
+    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -405,7 +400,6 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
     pdf.ln(5)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -572,27 +566,20 @@ def main():
     elif choice == "Global Settings":
         st.subheader("Department Contact Settings")
         st.info("Use this page to manage the default email addresses for your internal departments.")
-        
-        # Load current settings
         current_settings_df = get_data("Settings")
         settings_dict = {}
         if not current_settings_df.empty:
             settings_dict = dict(zip(current_settings_df["Department"], current_settings_df["Email"]))
-        
         with st.form("settings_form"):
             s_wages = st.text_input("Wages Department", value=settings_dict.get("Wages", ""))
             s_sars = st.text_input("SARS Department", value=settings_dict.get("SARS", ""))
             s_muni = st.text_input("Municipal Department", value=settings_dict.get("Municipal", ""))
             s_comp = st.text_input("Compliance Department", value=settings_dict.get("Compliance", ""))
             s_debt = st.text_input("Debt Collection Department", value=settings_dict.get("Debt Collection", ""))
-            
             if st.form_submit_button("Save Global Settings"):
                 new_settings = {
-                    "Wages": s_wages,
-                    "SARS": s_sars,
-                    "Municipal": s_muni,
-                    "Compliance": s_comp,
-                    "Debt Collection": s_debt
+                    "Wages": s_wages, "SARS": s_sars, "Municipal": s_muni,
+                    "Compliance": s_comp, "Debt Collection": s_debt
                 }
                 if save_global_settings(new_settings):
                     st.success("Global Settings Saved!")
@@ -674,13 +661,10 @@ def main():
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
-            
-            # DATA FETCHING
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
-            date_requested = str(proj_row.get('Date Doc Requested', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
             takeon_name = str(proj_row.get('TakeOn Name', ''))
@@ -691,7 +675,6 @@ def main():
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
-            
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
             if assistant_email and assistant_email != "None": cc_list.append(assistant_email)
@@ -816,6 +799,7 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
+                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -917,6 +901,7 @@ def main():
             st.divider()
             st.markdown("### 4. Employees & Payroll")
             st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
+            
             with st.expander("Add New Employee", expanded=False):
                 with st.form("add_employee"):
                     e_name = st.text_input("Name")
@@ -928,17 +913,65 @@ def main():
                     e_pay = c2.checkbox("Payslip Received?")
                     e_id_copy = c3.checkbox("ID Copy?")
                     e_bank = c4.checkbox("Bank Conf?")
+                    
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur:
                             add_employee(b_choice, e_name, e_sur, e_id, e_paye, 
-                                         "YES" if e_con else "NO", "YES" if e_pay else "NO",
-                                         "YES" if e_id_copy else "NO", "YES" if e_bank else "NO")
+                                         "YES" if e_con else "NO", 
+                                         "YES" if e_pay else "NO",
+                                         "YES" if e_id_copy else "NO",
+                                         "YES" if e_bank else "NO")
                             st.success("Employee Added!")
                             st.rerun()
                         else:
                             st.error("Name and Surname required.")
+            
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
+                
+                # --- NEW: WAGES EMAIL BUTTON ---
+                if st.button("Draft Wages Handover Email"):
+                    # 1. Fetch Wages Email
+                    settings_df = get_data("Settings")
+                    wages_email = ""
+                    if not settings_df.empty:
+                        # Simple lookup: find row where Department is Wages
+                        row = settings_df[settings_df['Department'] == 'Wages']
+                        if not row.empty:
+                            wages_email = row.iloc[0]['Email']
+                    
+                    if wages_email:
+                        subject = f"New Complex Take-On: {b_choice} - Employee Payroll Handover"
+                        body = (f"Dear Wages Department,\n\n"
+                                f"Please find below the list of employees for the new take-on: {b_choice}.\n\n")
+                        
+                        for _, row in employees_df.iterrows():
+                            e_name = f"{row['Name']} {row['Surname']}"
+                            e_id = str(row['ID Number'])
+                            docs = []
+                            if str(row.get('Contract Received', '')).upper() == 'YES': docs.append("Contract: YES")
+                            else: docs.append("Contract: NO")
+                            if str(row.get('Payslip Received', '')).upper() == 'YES': docs.append("Payslip: YES")
+                            else: docs.append("Payslip: NO")
+                            if str(row.get('ID Copy Received', '')).upper() == 'YES': docs.append("ID: YES")
+                            else: docs.append("ID: NO")
+                            if str(row.get('Bank Confirmation', '')).upper() == 'YES': docs.append("Bank Conf: YES")
+                            else: docs.append("Bank Conf: NO")
+                            
+                            doc_status = " | ".join(docs)
+                            body += f"- {e_name} (ID: {e_id})\n  {doc_status}\n\n"
+                        
+                        body += ("NOTE: The actual documentation (Contracts, Payslips, IDs, Bank Confirmations) "
+                                 "will be forwarded to you via a separate email.\n\n"
+                                 f"Regards,\n{takeon_name}\nPretor Group")
+                        
+                        safe_subject = urllib.parse.quote(subject)
+                        safe_body = urllib.parse.quote(body)
+                        link = f'<a href="mailto:{wages_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Wages Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                    else:
+                        st.error("Wages Email not found in Global Settings.")
+
                 st.markdown("#### Remove Employee")
                 emp_options = [f"{row['Name']} {row['Surname']}" for _, row in employees_df.iterrows()]
                 to_delete = st.selectbox("Select Employee to Remove", emp_options, key="del_emp_select")
@@ -950,7 +983,7 @@ def main():
                             st.rerun()
             else:
                 st.caption("No employees loaded.")
-            
+
             st.divider()
             st.markdown("### 5. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
