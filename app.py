@@ -48,7 +48,6 @@ def get_data(worksheet_name):
                     return pd.DataFrame()
             if worksheet_name == "Employees":
                 try:
-                    # Updated schema for Employees
                     cols = ["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", 
                             "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"]
                     sh.add_worksheet("Employees", 100, 9)
@@ -74,7 +73,6 @@ def add_service_provider(complex_name, name, service, email, phone):
     ws.append_row([complex_name, name, service, email, phone, ""])
     clear_cache()
 
-# UPDATED: Added id_copy and bank_conf arguments
 def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf):
     sh = get_google_sheet()
     ws = sh.worksheet("Employees")
@@ -171,9 +169,7 @@ def create_new_building(data_dict):
         data_dict["Assistant Email"],
         data_dict["Bookkeeper Name"],
         data_dict["Bookkeeper Email"],
-        "", # Col 31 (UIF)
-        "", # Col 32 (COIDA)
-        ""  # Col 33 (SARS PAYE)
+        "", "", "" 
     ]
     ws_projects.append_row(row_data)
     
@@ -328,10 +324,8 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
-    
     pdf.set_font("Arial", size=10)
     intro = (
         f"ATTENTION: {agent_name}\n\n"
@@ -341,22 +335,17 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     )
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    
     curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
     pdf.ln(5)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
@@ -365,13 +354,11 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"Reference: S{building_code}12005X"
     )
     pdf.multi_cell(0, 5, clean_text(banking_info))
-    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
-    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -382,7 +369,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -391,7 +377,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -400,11 +385,9 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(40, 10, clean_text(str(row['Responsibility'])[:20]), 1)
         pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
-    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
-    
     if not providers_df.empty:
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(50, 10, "Provider Name", 1)
@@ -412,7 +395,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(50, 10, "Email", 1)
         pdf.cell(40, 10, "Phone", 1)
         pdf.ln()
-        
         pdf.set_font("Arial", size=9)
         for _, row in providers_df.iterrows():
             pdf.cell(50, 10, clean_text(str(row['Provider Name'])[:25]), 1)
@@ -423,7 +405,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     else:
         pdf.set_font("Arial", 'I', 10)
         pdf.cell(0, 10, "No service providers recorded.", ln=1)
-        
     filename = clean_text(f"{building_name}_Report.pdf")
     pdf.output(filename)
     return filename
@@ -555,6 +536,7 @@ def main():
                 with st.form("update_details_form"):
                     def smart_input(label, col_name):
                         val = str(proj_row.get(col_name, ''))
+                        # FIXED BOOLEAN LOGIC HERE
                         is_locked = bool(val.strip() != "" and val != "None")
                         return st.text_input(label, value=val, disabled=is_locked), col_name
 
@@ -850,6 +832,24 @@ def main():
                             date_sent = str(row['Date Emailed'])
                             status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
                             body += f"- {service}: {name} [{status}]\n"
+                    
+                    # NEW: EMPLOYEE LOGIC
+                    if not employees_df.empty:
+                        body += "\n👥 EMPLOYEE TAKEOVER STATUS:\n"
+                        for _, row in employees_df.iterrows():
+                            e_name = f"{row['Name']} {row['Surname']}"
+                            docs = []
+                            if str(row.get('Contract Received', '')).upper() == 'YES': docs.append("Contract ✅")
+                            else: docs.append("Contract ❌")
+                            if str(row.get('Payslip Received', '')).upper() == 'YES': docs.append("Payslip ✅")
+                            else: docs.append("Payslip ❌")
+                            if str(row.get('ID Copy Received', '')).upper() == 'YES': docs.append("ID ✅")
+                            else: docs.append("ID ❌")
+                            if str(row.get('Bank Confirmation', '')).upper() == 'YES': docs.append("Bank Conf ✅")
+                            else: docs.append("Bank Conf ❌")
+                            doc_status = ", ".join(docs)
+                            body += f"- {e_name}: {doc_status}\n"
+
                     body += "\nRegards,\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
