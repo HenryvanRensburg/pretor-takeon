@@ -41,6 +41,7 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
+            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
@@ -53,6 +54,14 @@ def get_data(worksheet_name):
                     sh.add_worksheet("Employees", 100, 9)
                     sh.worksheet("Employees").append_row(cols)
                     return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
+            # NEW: SETTINGS SHEET
+            if worksheet_name == "Settings":
+                try:
+                    sh.add_worksheet("Settings", 100, 2)
+                    sh.worksheet("Settings").append_row(["Department", "Email"])
+                    return pd.DataFrame(columns=["Department", "Email"])
                 except:
                     return pd.DataFrame()
             return pd.DataFrame()
@@ -98,6 +107,25 @@ def delete_employee(complex_name, name, surname):
             return False
     except Exception as e:
         st.error(f"Error deleting employee: {e}")
+        return False
+
+# NEW: SAVE GLOBAL SETTINGS
+def save_global_settings(settings_dict):
+    sh = get_google_sheet()
+    try:
+        ws = sh.worksheet("Settings")
+        # Clear existing content (except header if we wanted, but easier to rewrite all)
+        ws.clear()
+        # Prepare data
+        data = [["Department", "Email"]] # Header
+        for dept, email in settings_dict.items():
+            data.append([dept, email])
+        # Write
+        ws.update("A1", data)
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error saving settings: {e}")
         return False
 
 def update_service_provider_date(complex_name, provider_name):
@@ -482,7 +510,7 @@ def main():
         
     st.title("🏢 Pretor Group: Take-On Manager")
 
-    menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings"]
+    menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
     choice = st.sidebar.selectbox("Menu", menu)
     
     if choice == "Dashboard":
@@ -540,6 +568,35 @@ def main():
         df = get_data("Master")
         if not df.empty:
             st.dataframe(df)
+            
+    elif choice == "Global Settings":
+        st.subheader("Department Contact Settings")
+        st.info("Use this page to manage the default email addresses for your internal departments.")
+        
+        # Load current settings
+        current_settings_df = get_data("Settings")
+        settings_dict = {}
+        if not current_settings_df.empty:
+            settings_dict = dict(zip(current_settings_df["Department"], current_settings_df["Email"]))
+        
+        with st.form("settings_form"):
+            s_wages = st.text_input("Wages Department", value=settings_dict.get("Wages", ""))
+            s_sars = st.text_input("SARS Department", value=settings_dict.get("SARS", ""))
+            s_muni = st.text_input("Municipal Department", value=settings_dict.get("Municipal", ""))
+            s_comp = st.text_input("Compliance Department", value=settings_dict.get("Compliance", ""))
+            s_debt = st.text_input("Debt Collection Department", value=settings_dict.get("Debt Collection", ""))
+            
+            if st.form_submit_button("Save Global Settings"):
+                new_settings = {
+                    "Wages": s_wages,
+                    "SARS": s_sars,
+                    "Municipal": s_muni,
+                    "Compliance": s_comp,
+                    "Debt Collection": s_debt
+                }
+                if save_global_settings(new_settings):
+                    st.success("Global Settings Saved!")
+                    st.rerun()
 
     elif choice == "New Building":
         st.subheader("Onboard New Complex")
@@ -617,6 +674,8 @@ def main():
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
+            
+            # DATA FETCHING
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
@@ -632,6 +691,7 @@ def main():
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
+            
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
             if assistant_email and assistant_email != "None": cc_list.append(assistant_email)
@@ -971,7 +1031,6 @@ def main():
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
                         
-                        # --- NEW: COMPLETION EMAIL LINK ---
                         subj = f"Take-On Finalized: {b_choice}"
                         body = (f"Dear Client,\n\n"
                                 f"We are pleased to confirm that the take-on process for {b_choice} has been successfully finalized.\n\n"
