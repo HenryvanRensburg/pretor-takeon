@@ -305,8 +305,10 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
+    
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
+    
     pdf.set_font("Arial", size=10)
     intro = (
         f"ATTENTION: {agent_name}\n\n"
@@ -316,17 +318,22 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     )
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
+    
     curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
+    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
     pdf.ln(5)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
+    
     banking_info = (
         "Account Name: Pretor Group (Pty) Ltd\n"
         "Bank: First National Bank\n"
@@ -335,11 +342,13 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
         f"Reference: S{building_code}12005X"
     )
     pdf.multi_cell(0, 5, clean_text(banking_info))
+    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
+    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -350,6 +359,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
+    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -358,6 +368,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
+    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -366,9 +377,11 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(40, 10, clean_text(str(row['Responsibility'])[:20]), 1)
         pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
+    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
+    
     if not providers_df.empty:
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(50, 10, "Provider Name", 1)
@@ -376,6 +389,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(50, 10, "Email", 1)
         pdf.cell(40, 10, "Phone", 1)
         pdf.ln()
+        
         pdf.set_font("Arial", size=9)
         for _, row in providers_df.iterrows():
             pdf.cell(50, 10, clean_text(str(row['Provider Name'])[:25]), 1)
@@ -386,6 +400,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     else:
         pdf.set_font("Arial", 'I', 10)
         pdf.cell(0, 10, "No service providers recorded.", ln=1)
+        
     filename = clean_text(f"{building_name}_Report.pdf")
     pdf.output(filename)
     return filename
@@ -510,16 +525,16 @@ def main():
             cc_string = ",".join(team_emails)
             team_list = [n for n in [assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
             
-            # --- GAP FILLING FORM (EDIT ALL DETAILS) ---
+            # --- GAP FILLING FORM (EDIT DETAILS) ---
             with st.expander("ℹ️ View / Edit Building Details", expanded=False):
-                st.caption("Fields in GREY are locked (already filled). Fields in WHITE are editable.")
+                st.caption("Fields in GREY are locked. Fields in WHITE can be updated.")
                 with st.form("update_details_form"):
+                    # FIX: bool() wrapper ensures proper boolean type for disabled param
                     def smart_input(label, col_name):
                         val = str(proj_row.get(col_name, ''))
-                        is_locked = val and val.strip() != "" and val != "None"
+                        is_locked = (val.strip() != "") and (val != "None")
                         return st.text_input(label, value=val, disabled=is_locked), col_name
 
-                    # Basic
                     st.markdown("**Basic Info**")
                     c1, c2 = st.columns(2)
                     u_type, k_type = smart_input("Type", "Type")
@@ -528,7 +543,6 @@ def main():
                     u_date, k_date = smart_input("Take On Date", "Take On Date")
                     u_unit, k_unit = smart_input("No of Units", "No of Units")
 
-                    # Team
                     st.markdown("**Internal Team**")
                     c5, c6 = st.columns(2)
                     u_mgr, k_mgr = smart_input("Manager Name", "Assigned Manager")
@@ -540,7 +554,6 @@ def main():
                     u_bk, k_bk = smart_input("Bookkeeper Name", "Bookkeeper Name")
                     u_bke, k_bke = smart_input("Bookkeeper Email", "Bookkeeper Email")
 
-                    # Financial/Legal
                     st.markdown("**Financial & Legal**")
                     u_fees, k_fees = smart_input("Mgmt Fees", "Mgmt Fees")
                     l1, l2, l3 = st.columns(3)
@@ -555,7 +568,6 @@ def main():
                     u_aud, k_aud = smart_input("Auditor", "Auditor")
                     u_last, k_last = smart_input("Last Audit Year", "Last Audit Year")
 
-                    # System
                     st.markdown("**System Info**")
                     s1, s2 = st.columns(2)
                     u_bcode, k_bcode = smart_input("Building Code", "Building Code")
