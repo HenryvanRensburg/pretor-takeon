@@ -56,6 +56,14 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=cols)
                 except:
                     return pd.DataFrame()
+            if worksheet_name == "Arrears":
+                try:
+                    cols = ["Complex Name", "Unit Number", "Outstanding Amount", "Legal Action", "Attorney"]
+                    sh.add_worksheet("Arrears", 100, 5)
+                    sh.worksheet("Arrears").append_row(cols)
+                    return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
             if worksheet_name == "Settings":
                 try:
                     sh.add_worksheet("Settings", 100, 2)
@@ -87,6 +95,12 @@ def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, i
     ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
+def add_arrears_item(complex_name, unit, amount, legal, attorney):
+    sh = get_google_sheet()
+    ws = sh.worksheet("Arrears")
+    ws.append_row([complex_name, unit, amount, legal, attorney])
+    clear_cache()
+
 def delete_employee(complex_name, name, surname):
     sh = get_google_sheet()
     ws = sh.worksheet("Employees")
@@ -106,6 +120,28 @@ def delete_employee(complex_name, name, surname):
             return False
     except Exception as e:
         st.error(f"Error deleting employee: {e}")
+        return False
+
+def delete_arrears_item(complex_name, unit, amount):
+    sh = get_google_sheet()
+    ws = sh.worksheet("Arrears")
+    try:
+        rows = ws.get_all_values()
+        row_to_delete = None
+        for idx, row in enumerate(rows):
+            # Match Complex, Unit and Amount to be safe
+            if len(row) > 2:
+                if row[0] == complex_name and row[1] == str(unit) and str(row[2]) == str(amount):
+                    row_to_delete = idx + 1
+                    break
+        if row_to_delete:
+            ws.delete_rows(row_to_delete)
+            clear_cache()
+            return True
+        else:
+            return False
+    except Exception as e:
+        st.error(f"Error deleting arrears item: {e}")
         return False
 
 def save_global_settings(settings_dict):
@@ -172,15 +208,14 @@ def update_sars_status(complex_name, reset=False):
         cell = ws.find(complex_name)
         row_num = cell.row
         headers = ws.row_values(1)
-        
-        if "SARS Sent Date" not in headers:
-            st.error("CRITICAL ERROR: Column 'SARS Sent Date' is missing in the 'Projects' tab. Please add it to Row 1.")
+        try:
+            col_date = headers.index("SARS Sent Date") + 1
+        except ValueError:
+            st.error("Please add 'SARS Sent Date' header to Projects tab.")
             return False
-            
-        col_date = headers.index("SARS Sent Date") + 1
         
         if reset:
-            ws.update_cell(row_num, col_date, "") 
+            ws.update_cell(row_num, col_date, "") # Clear date
         else:
             today = datetime.now().strftime("%Y-%m-%d")
             ws.update_cell(row_num, col_date, today)
@@ -823,6 +858,13 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
+            # NEW: Load Arrears Data
+            all_arrears = get_data("Arrears")
+            if not all_arrears.empty:
+                arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
+            else:
+                arrears_df = pd.DataFrame()
+
             st.markdown("### 1. Previous Agent Handover Request")
             col_a, col_b = st.columns(2)
             agent_name = col_a.text_input("Previous Agent Name", value=saved_agent_name)
@@ -1040,8 +1082,63 @@ def main():
             else:
                 st.caption("No employees loaded.")
             
+            # --- STEP 5: ARREARS & LEGAL (NEW!) ---
             st.divider()
-            st.markdown("### 5. Agent Follow-up (Urgent)")
+            st.markdown("### 5. Arrears & Legal")
+            st.info("Add units with outstanding levies for handover to Debt Collection.")
+            
+            with st.expander("Add Arrears Item", expanded=False):
+                with st.form("add_arrears"):
+                    a_unit = st.text_input("Unit Number")
+                    a_amount = st.number_input("Outstanding Amount", min_value=0.0, step=0.01, format="%.2f")
+                    a_legal = st.checkbox("Legal Action Taken?")
+                    a_attorney = st.text_input("Attorney Name (if applicable)", disabled=not a_legal)
+                    
+                    if st.form_submit_button("Add Record"):
+                        if a_unit:
+                            att_val = a_attorney if a_legal else "N/A"
+                            legal_val = "YES" if a_legal else "NO"
+                            add_arrears_item(b_choice, a_unit, a_amount, legal_val, att_val)
+                            st.success("Record added!")
+                            st.rerun()
+                        else:
+                            st.error("Unit Number is required.")
+                            
+            if not arrears_df.empty:
+                st.dataframe(arrears_df[["Unit Number", "Outstanding Amount", "Legal Action", "Attorney"]], hide_index=True)
+                
+                if st.button("Draft Debt Collection Email"):
+                    settings_df = get_data("Settings")
+                    dc_email = ""
+                    if not settings_df.empty:
+                        row = settings_df[settings_df['Department'] == 'Debt Collection']
+                        if not row.empty: dc_email = row.iloc[0]['Email']
+                    
+                    if dc_email:
+                        subject = f"Arrears Handover: {b_choice}"
+                        body = (f"Dear Debt Collection Department,\n\n"
+                                f"Please find below the list of units in arrears for the new complex: {b_choice}.\n\n")
+                        
+                        for _, row in arrears_df.iterrows():
+                            u = row['Unit Number']
+                            amt = row['Outstanding Amount']
+                            leg = row['Legal Action']
+                            att = row['Attorney']
+                            body += f"- Unit {u}: R{amt} (Legal: {leg}, Attorney: {att})\n"
+                            
+                        body += f"\nRegards,\n{takeon_name}\nPretor Group"
+                        
+                        safe_subject = urllib.parse.quote(subject)
+                        safe_body = urllib.parse.quote(body)
+                        link = f'<a href="mailto:{dc_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Debt Collection Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                    else:
+                        st.error("Debt Collection Email not set in Global Settings.")
+            else:
+                st.caption("No arrears records loaded.")
+
+            st.divider()
+            st.markdown("### 6. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
             if agent_pending_df.empty:
                 st.success("✅ No outstanding items marked for Previous Agent.")
@@ -1062,7 +1159,7 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
-            st.markdown("### 6. Reports & Comms")
+            st.markdown("### 7. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
@@ -1111,64 +1208,49 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
-            
-            # --- FULL-WIDTH SARS SECTION ---
-            st.markdown("---")
-            st.markdown("#### 🏛️ SARS Department Handover")
-            st.info("Notify the SARS department about the new complex registration.")
-            
-            # Logic: Check sent date.
-            if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
-                st.success(f"✅ SARS email sent on {sars_sent_date}")
-                with st.expander("Need to resend?"):
-                    if st.button("Reset SARS Status"):
-                        update_sars_status(b_choice, reset=True)
-                        st.rerun()
-            else:
-                # Get settings or fallback
-                settings_df = get_data("Settings")
-                sars_email_setting = ""
-                if not settings_df.empty:
-                    # Case-insensitive lookup
-                    row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
-                    if not row.empty: sars_email_setting = row.iloc[0]['Email']
                 
-                if sars_email_setting:
-                    final_sars_email = sars_email_setting
-                    st.caption(f"Sending to: {final_sars_email}")
+                # --- SARS HANDOVER ---
+                st.markdown("#### 🏛️ SARS Department Handover")
+                if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
+                    st.success(f"✅ SARS email sent on {sars_sent_date}")
+                    with st.expander("Need to resend?"):
+                        if st.button("Reset SARS Status"):
+                            update_sars_status(b_choice, reset=True)
+                            st.rerun()
                 else:
-                    st.warning("⚠️ SARS Department Email not set in Global Settings.")
-                    final_sars_email = st.text_input("Enter SARS Dept Email here:", placeholder="tax@pretor.co.za")
-
-                # Only show button if we have an email
-                if final_sars_email:
-                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
-                    if has_tax_num:
-                        sars_status_text = f"Tax Number Available: {tax_number}"
-                        st.write(f"**Status:** {sars_status_text}")
-                    else:
-                        sars_status_text = st.radio("Select Tax Status:", 
-                            ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
-                            key="sars_radio_btn")
+                    settings_df = get_data("Settings")
+                    sars_email = ""
+                    if not settings_df.empty:
+                        row = settings_df[settings_df['Department'] == 'SARS']
+                        if not row.empty: sars_email = row.iloc[0]['Email']
                     
-                    if st.button("Draft SARS Email & Mark Sent"):
-                        if update_sars_status(b_choice):
-                            subj = f"New Complex Handover: {b_choice} - SARS Details"
-                            body = (f"Dear SARS Department,\n\n"
-                                    f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
-                                    f"Current Status: {sars_status_text}\n\n"
-                                    f"Please proceed with the necessary updates/registrations.\n\n"
-                                    f"Regards,\n{takeon_name}")
-                            
-                            safe_subj = urllib.parse.quote(subj)
-                            safe_body = urllib.parse.quote(body)
-                            link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
-                            st.markdown(link, unsafe_allow_html=True)
-                            st.success("Marked as sent! Click link above.")
-                else:
-                    st.info("Please enter an email address to proceed.")
+                    if not sars_email:
+                        sars_email = st.text_input("SARS Email Address (Not set in Settings)", placeholder="tax@pretor.co.za")
+                    
+                    if sars_email:
+                        has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                        if has_tax_num:
+                            sars_status = f"Tax Number Available: {tax_number}"
+                        else:
+                            sars_status = st.radio("Select Tax Status for Email:", 
+                                ["Not Registered - Please Register", "Exempt", "Pending from Agent"], 
+                                key="sars_radio")
+                        
+                        if st.button("Draft SARS Email & Mark Sent"):
+                            if update_sars_status(b_choice):
+                                subj = f"New Complex Handover: {b_choice} - SARS Details"
+                                body = (f"Dear SARS Department,\n\n"
+                                        f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                        f"Status: {sars_status}\n\n"
+                                        f"Please proceed with the necessary updates/registrations.\n\n"
+                                        f"Regards,\n{takeon_name}")
+                                
+                                safe_subj = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Marked as sent! Click link above.")
 
-            st.markdown("---")
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
