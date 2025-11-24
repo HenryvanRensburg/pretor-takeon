@@ -348,7 +348,6 @@ def clean_text(text):
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 def add_logo_to_pdf(pdf):
-    # Standard Logo Placement
     try:
         if os.path.exists("pretor_logo.png"):
             pdf.image("pretor_logo.png", 10, 8, 40)
@@ -360,25 +359,20 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     add_logo_to_pdf(pdf)
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
-    
     pdf.set_font("Arial", size=10)
-    intro = (
-        f"ATTENTION: {agent_name}\n\n"
-        f"We confirm that we have been appointed as Managing Agents of {building_name} effective from {take_on_date}.\n"
-        f"In terms of this appointment, we request you to make all documentation in your possession pertaining to "
-        f"{building_name} available for collection by us."
-    )
+    intro = (f"ATTENTION: {agent_name}\n\n"
+             f"We confirm that we have been appointed as Managing Agents of {building_name} effective from {take_on_date}.\n"
+             f"In terms of this appointment, we request you to make all documentation in your possession pertaining to "
+             f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
-    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
@@ -387,22 +381,14 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
-    
-    banking_info = (
-        "Account Name: Pretor Group (Pty) Ltd\n"
-        "Bank: First National Bank\n"
-        "Branch: Pretoria (251445)\n"
-        "Account Number: 514 242 794 08\n"
-        f"Reference: S{building_code}12005X"
-    )
+    banking_info = (f"Account Name: Pretor Group (Pty) Ltd\nBank: First National Bank\nBranch: Pretoria (251445)\n"
+                    f"Account Number: 514 242 794 08\nReference: S{building_code}12005X")
     pdf.multi_cell(0, 5, clean_text(banking_info))
-    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
-    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -411,11 +397,9 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf = FPDF()
     pdf.add_page()
     add_logo_to_pdf(pdf)
-    
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -424,7 +408,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -433,11 +416,9 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(40, 10, clean_text(str(row['Responsibility'])[:20]), 1)
         pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
-    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
-    
     if not providers_df.empty:
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(50, 10, "Provider Name", 1)
@@ -445,7 +426,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(50, 10, "Email", 1)
         pdf.cell(40, 10, "Phone", 1)
         pdf.ln()
-        
         pdf.set_font("Arial", size=9)
         for _, row in providers_df.iterrows():
             pdf.cell(50, 10, clean_text(str(row['Provider Name'])[:25]), 1)
@@ -456,7 +436,6 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     else:
         pdf.set_font("Arial", 'I', 10)
         pdf.cell(0, 10, "No service providers recorded.", ln=1)
-        
     filename = clean_text(f"{building_name}_Report.pdf")
     pdf.output(filename)
     return filename
@@ -465,13 +444,11 @@ def generate_weekly_report_pdf(summary_list):
     pdf = FPDF()
     pdf.add_page()
     add_logo_to_pdf(pdf)
-    
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"Weekly Take-On Overview"), ln=1, align='C')
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 10, txt=clean_text(f"Date: {datetime.now().strftime('%Y-%m-%d')}"), ln=1, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(60, 10, "Complex Name", 1)
     pdf.cell(40, 10, "Manager", 1)
@@ -479,7 +456,6 @@ def generate_weekly_report_pdf(summary_list):
     pdf.cell(20, 10, "Prog.", 1)
     pdf.cell(40, 10, "Pending Items", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", size=9)
     for item in summary_list:
         name = clean_text(str(item['Complex Name'])[:25])
@@ -487,14 +463,12 @@ def generate_weekly_report_pdf(summary_list):
         status = clean_text(item['Status'])[:15]
         progress = f"{int(item['Progress'] * 100)}%"
         pending = str(item['Items Pending'])
-        
         pdf.cell(60, 10, name, 1)
         pdf.cell(40, 10, mgr, 1)
         pdf.cell(30, 10, status, 1)
         pdf.cell(20, 10, progress, 1)
         pdf.cell(40, 10, pending, 1)
         pdf.ln()
-        
     filename = f"Weekly_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
     pdf.output(filename)
     return filename
@@ -503,7 +477,6 @@ def generate_weekly_report_pdf(summary_list):
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
     
-    # SIDEBAR LOGO
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
         
@@ -643,12 +616,12 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
-            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
+            date_requested = str(proj_row.get('Date Doc Requested', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
             takeon_name = str(proj_row.get('TakeOn Name', ''))
@@ -783,7 +756,6 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
-                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -808,7 +780,6 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
-                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -886,7 +857,6 @@ def main():
             st.divider()
             st.markdown("### 4. Employees & Payroll")
             st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
-            
             with st.expander("Add New Employee", expanded=False):
                 with st.form("add_employee"):
                     e_name = st.text_input("Name")
@@ -898,7 +868,6 @@ def main():
                     e_pay = c2.checkbox("Payslip Received?")
                     e_id_copy = c3.checkbox("ID Copy?")
                     e_bank = c4.checkbox("Bank Conf?")
-                    
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur:
                             add_employee(b_choice, e_name, e_sur, e_id, e_paye, 
@@ -908,7 +877,6 @@ def main():
                             st.rerun()
                         else:
                             st.error("Name and Surname required.")
-            
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
                 st.markdown("#### Remove Employee")
@@ -922,7 +890,7 @@ def main():
                             st.rerun()
             else:
                 st.caption("No employees loaded.")
-
+            
             st.divider()
             st.markdown("### 5. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
@@ -1002,6 +970,23 @@ def main():
                         pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
+                        
+                        # --- NEW: COMPLETION EMAIL LINK ---
+                        subj = f"Take-On Finalized: {b_choice}"
+                        body = (f"Dear Client,\n\n"
+                                f"We are pleased to confirm that the take-on process for {b_choice} has been successfully finalized.\n\n"
+                                f"Take-On Effective Date: {take_on_date}\n"
+                                f"Initial Documentation Requested: {date_requested}\n"
+                                f"Date Finalized: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+                                f"We trust you find the attached final report in order.\n\n"
+                                f"Regards,\n{takeon_name}\nPretor Group")
+                        
+                        safe_subj = urllib.parse.quote(subj)
+                        safe_body = urllib.parse.quote(body)
+                        cc_param = f"&cc={cc_string}" if cc_string else ""
+                        
+                        link = f'<a href="mailto:{client_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#28a745; color:white; padding:10px; text-decoration:none; border-radius:5px; display:inline-block; margin-top:10px;">✅ Send Completion Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
                         st.balloons()
                     else:
                         st.error(f"Cannot finalize. {len(pending_df)} items pending.")
