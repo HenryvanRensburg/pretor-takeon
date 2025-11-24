@@ -164,8 +164,8 @@ def update_wages_status(complex_name, employee_count):
     except Exception as e:
         return False
 
-def update_sars_status(complex_name):
-    """Updates the SARS Sent Date."""
+def update_sars_status(complex_name, reset=False):
+    """Updates or Resets the SARS Sent Date."""
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
     try:
@@ -177,9 +177,13 @@ def update_sars_status(complex_name):
         except ValueError:
             st.error("Please add 'SARS Sent Date' header to Projects tab.")
             return False
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        ws.update_cell(row_num, col_date, today)
+        
+        if reset:
+            ws.update_cell(row_num, col_date, "") # Clear date
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            ws.update_cell(row_num, col_date, today)
+        
         clear_cache()
         return True
     except Exception as e:
@@ -853,7 +857,6 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
-                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -878,7 +881,6 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
-                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -1061,6 +1063,55 @@ def main():
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
+            
+            # --- SARS SECTION (MOVED HERE) ---
+            st.markdown("#### 🏛️ SARS Department Handover")
+            if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
+                st.success(f"✅ SARS email sent on {sars_sent_date}")
+                
+                # Optional Resend logic
+                with st.expander("Need to resend?"):
+                    if st.button("Reset SARS Status"):
+                        update_sars_status(b_choice, reset=True)
+                        st.rerun()
+            else:
+                settings_df = get_data("Settings")
+                sars_email = ""
+                if not settings_df.empty:
+                    row = settings_df[settings_df['Department'] == 'SARS']
+                    if not row.empty: sars_email = row.iloc[0]['Email']
+                
+                # FALLBACK INPUT IF SETTING MISSING
+                if not sars_email:
+                    sars_email = st.text_input("SARS Email Address (Not set in Global Settings)", placeholder="tax@pretor.co.za")
+                
+                if sars_email:
+                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                    if has_tax_num:
+                        sars_status = f"Tax Number Available: {tax_number}"
+                    else:
+                        sars_status = st.radio("Select Tax Status for Email:", 
+                            ["Not Registered - Please Register", "Exempt", "Pending from Agent"], 
+                            key="sars_radio")
+                    
+                    if st.button("Draft SARS Email & Mark Sent"):
+                        if update_sars_status(b_choice):
+                            subj = f"New Complex Handover: {b_choice} - SARS Details"
+                            body = (f"Dear SARS Department,\n\n"
+                                    f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                    f"Status: {sars_status}\n\n"
+                                    f"Please proceed with the necessary updates/registrations.\n\n"
+                                    f"Regards,\n{takeon_name}")
+                            
+                            safe_subj = urllib.parse.quote(subj)
+                            safe_body = urllib.parse.quote(body)
+                            link = f'<a href="mailto:{sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                            st.success("Marked as sent! Click link above.")
+
+            st.divider()
+
+            # --- CLIENT UPDATE & FINALIZE ---
             with col1:
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
@@ -1106,44 +1157,6 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
-                
-                # --- SARS HANDOVER (MOVED HERE FOR VISIBILITY) ---
-                st.markdown("#### SARS Department Handover")
-                if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
-                    st.success(f"✅ SARS email sent on {sars_sent_date}")
-                else:
-                    settings_df = get_data("Settings")
-                    sars_email = ""
-                    if not settings_df.empty:
-                        row = settings_df[settings_df['Department'] == 'SARS']
-                        if not row.empty: sars_email = row.iloc[0]['Email']
-                    
-                    if sars_email:
-                        has_tax_num = tax_number and tax_number != "None" and tax_number != ""
-                        if has_tax_num:
-                            sars_status = f"Tax Number Available: {tax_number}"
-                        else:
-                            sars_status = st.radio("Select Tax Status for Email:", 
-                                ["Not Registered - Please Register", "Exempt", "Pending from Agent"], 
-                                key="sars_radio")
-                        
-                        if st.button("Draft SARS Email & Mark Sent"):
-                            if update_sars_status(b_choice):
-                                subj = f"New Complex Handover: {b_choice} - SARS Details"
-                                body = (f"Dear SARS Department,\n\n"
-                                        f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
-                                        f"Status: {sars_status}\n\n"
-                                        f"Please proceed with the necessary updates/registrations.\n\n"
-                                        f"Regards,\n{takeon_name}")
-                                
-                                safe_subj = urllib.parse.quote(subj)
-                                safe_body = urllib.parse.quote(body)
-                                link = f'<a href="mailto:{sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
-                                st.markdown(link, unsafe_allow_html=True)
-                                st.success("Marked as sent! Click link above.")
-                    else:
-                        st.error("SARS Email not found in Global Settings.")
-
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
