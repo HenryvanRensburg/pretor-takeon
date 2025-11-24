@@ -172,14 +172,15 @@ def update_sars_status(complex_name, reset=False):
         cell = ws.find(complex_name)
         row_num = cell.row
         headers = ws.row_values(1)
-        try:
-            col_date = headers.index("SARS Sent Date") + 1
-        except ValueError:
-            st.error("Please add 'SARS Sent Date' header to Projects tab.")
+        
+        if "SARS Sent Date" not in headers:
+            st.error("CRITICAL ERROR: Column 'SARS Sent Date' is missing in the 'Projects' tab. Please add it to Row 1.")
             return False
+            
+        col_date = headers.index("SARS Sent Date") + 1
         
         if reset:
-            ws.update_cell(row_num, col_date, "") # Clear date
+            ws.update_cell(row_num, col_date, "") 
         else:
             today = datetime.now().strftime("%Y-%m-%d")
             ws.update_cell(row_num, col_date, today)
@@ -442,6 +443,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
+    # Use DB items
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -1060,8 +1062,6 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
-            
-            # --- 6. REPORTS & COMMS (SARS VISIBILITY FIX) ---
             st.markdown("### 6. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
@@ -1111,60 +1111,64 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
+            
+            # --- FULL-WIDTH SARS SECTION ---
+            st.markdown("---")
+            st.markdown("#### 🏛️ SARS Department Handover")
+            st.info("Notify the SARS department about the new complex registration.")
+            
+            # Logic: Check sent date.
+            if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
+                st.success(f"✅ SARS email sent on {sars_sent_date}")
+                with st.expander("Need to resend?"):
+                    if st.button("Reset SARS Status"):
+                        update_sars_status(b_choice, reset=True)
+                        st.rerun()
+            else:
+                # Get settings or fallback
+                settings_df = get_data("Settings")
+                sars_email_setting = ""
+                if not settings_df.empty:
+                    # Case-insensitive lookup
+                    row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
+                    if not row.empty: sars_email_setting = row.iloc[0]['Email']
                 
-                # --- NEW: SARS HANDOVER SECTION ---
-                st.markdown("#### 🏛️ SARS Department Handover")
-                
-                # Logic: Check if Sent Date exists. If YES -> Show Success. If NO -> Show Form.
-                if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
-                    st.success(f"✅ SARS email sent on {sars_sent_date}")
-                    with st.expander("Need to resend?"):
-                        if st.button("Reset SARS Status"):
-                            update_sars_status(b_choice, reset=True)
-                            st.rerun()
+                if sars_email_setting:
+                    final_sars_email = sars_email_setting
+                    st.caption(f"Sending to: {final_sars_email}")
                 else:
-                    # 1. Get Email from Settings
-                    settings_df = get_data("Settings")
-                    sars_email_setting = ""
-                    if not settings_df.empty:
-                        # Case-insensitive search for "SARS"
-                        row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
-                        if not row.empty: sars_email_setting = row.iloc[0]['Email']
-                    
-                    # 2. Fallback Input if not found
-                    if sars_email_setting:
-                        final_sars_email = sars_email_setting
-                        st.caption(f"Sending to: {final_sars_email}")
+                    st.warning("⚠️ SARS Department Email not set in Global Settings.")
+                    final_sars_email = st.text_input("Enter SARS Dept Email here:", placeholder="tax@pretor.co.za")
+
+                # Only show button if we have an email
+                if final_sars_email:
+                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                    if has_tax_num:
+                        sars_status_text = f"Tax Number Available: {tax_number}"
+                        st.write(f"**Status:** {sars_status_text}")
                     else:
-                        st.warning("⚠️ SARS Department Email not set in Global Settings.")
-                        final_sars_email = st.text_input("Please enter the SARS Email address here to proceed:", placeholder="tax@pretor.co.za")
+                        sars_status_text = st.radio("Select Tax Status:", 
+                            ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
+                            key="sars_radio_btn")
+                    
+                    if st.button("Draft SARS Email & Mark Sent"):
+                        if update_sars_status(b_choice):
+                            subj = f"New Complex Handover: {b_choice} - SARS Details"
+                            body = (f"Dear SARS Department,\n\n"
+                                    f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                    f"Current Status: {sars_status_text}\n\n"
+                                    f"Please proceed with the necessary updates/registrations.\n\n"
+                                    f"Regards,\n{takeon_name}")
+                            
+                            safe_subj = urllib.parse.quote(subj)
+                            safe_body = urllib.parse.quote(body)
+                            link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                            st.success("Marked as sent! Click link above.")
+                else:
+                    st.info("Please enter an email address to proceed.")
 
-                    # 3. Show Button ONLY if we have an email
-                    if final_sars_email:
-                        has_tax_num = tax_number and tax_number != "None" and tax_number != ""
-                        if has_tax_num:
-                            sars_status_text = f"Tax Number Available: {tax_number}"
-                            st.write(f"**Status:** {sars_status_text}")
-                        else:
-                            sars_status_text = st.radio("Select Tax Status for Email:", 
-                                ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
-                                key="sars_radio_btn")
-                        
-                        if st.button("Draft SARS Email & Mark Sent"):
-                            if update_sars_status(b_choice):
-                                subj = f"New Complex Handover: {b_choice} - SARS Details"
-                                body = (f"Dear SARS Department,\n\n"
-                                        f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
-                                        f"Current Status: {sars_status_text}\n\n"
-                                        f"Please proceed with the necessary updates/registrations.\n\n"
-                                        f"Regards,\n{takeon_name}")
-                                
-                                safe_subj = urllib.parse.quote(subj)
-                                safe_body = urllib.parse.quote(body)
-                                link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
-                                st.markdown(link, unsafe_allow_html=True)
-                                st.success("Marked as sent! Click link above.")
-
+            st.markdown("---")
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
