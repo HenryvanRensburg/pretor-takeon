@@ -120,29 +120,55 @@ def update_service_provider_date(complex_name, provider_name):
     return False
 
 def calculate_financial_periods(take_on_date_str, year_end_str):
+    """
+    Calculates financial periods with corrected logic:
+    - To Date = Take On Date - 1 day
+    - Start Date = 1st of month following Year End
+    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        
+        # 1. Determine "To Date" (Day before Take On)
+        period_end_date = take_on_date - relativedelta(days=1)
+        
+        # 2. Determine Year End Month
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 
+        ye_month = 2 # Default Feb
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
         
-        current_fin_year_start = take_on_date.replace(day=1, month=ye_month) + relativedelta(days=1)
-        if current_fin_year_start > take_on_date:
-            current_fin_year_start -= relativedelta(years=1)
-            
-        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {take_on_date.strftime('%d %B %Y')}"
+        # 3. Determine Start of Current Financial Year
+        # The FY starts on the 1st of the month AFTER the Year End month
+        start_month = ye_month + 1
+        if start_month > 12: start_month = 1
         
+        # Create a candidate start date in the same year as Take On
+        candidate_start = take_on_date.replace(month=start_month, day=1)
+        
+        # If the candidate start is in the future (relative to period_end), 
+        # then the FY started the previous year.
+        if candidate_start > period_end_date:
+            current_fin_year_start = candidate_start - relativedelta(years=1)
+        else:
+            current_fin_year_start = candidate_start
+            
+        current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {period_end_date.strftime('%d %B %Y')}"
+        
+        # 4. Calculate Past 5 Years (Financial)
         past_years = []
         for i in range(1, 6):
-            y_end = current_fin_year_start - relativedelta(days=1) - relativedelta(years=i-1)
-            past_years.append(f"Financial Year Ending: {y_end.strftime('%d %B %Y')}")
+            # The end of the previous year is the day before the current start
+            # We move back i-1 years from the current start to find the relevant FY end
+            fy_start_ref = current_fin_year_start - relativedelta(years=i-1)
+            fy_end_date = fy_start_ref - relativedelta(days=1)
+            past_years.append(fy_end_date.strftime('%d %B %Y'))
             
+        # 5. Bank Statements: 1 Month prior to Take On
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -176,7 +202,7 @@ def create_new_building(data_dict):
         data_dict["Building Code"],
         data_dict["Expense Code"],
         data_dict["Physical Address"],
-        data_dict["Assigned Manager"], # Portfolio Manager
+        data_dict["Assigned Manager"],
         str(data_dict["Date Doc Requested"]),
         "", 
         data_dict["Client Email"],
@@ -184,16 +210,16 @@ def create_new_building(data_dict):
         "", 
         "", 
         "",
-        data_dict["Manager Email"], # Portfolio Manager Email
+        data_dict["Manager Email"],
         data_dict["Assistant Name"],
         data_dict["Assistant Email"],
         data_dict["Bookkeeper Name"],
         data_dict["Bookkeeper Email"],
-        "", # UIF
-        "", # COIDA
-        "", # SARS
-        data_dict["TakeOn Name"], # NEW COL 34
-        data_dict["TakeOn Email"] # NEW COL 35
+        "", # Col 31 (UIF)
+        "", # Col 32 (COIDA)
+        ""  # Col 33 (SARS PAYE)
+        ,data_dict["TakeOn Name"],
+        data_dict["TakeOn Email"]
     ]
     ws_projects.append_row(row_data)
     
@@ -207,13 +233,21 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
+    # --- 1. ADD DYNAMIC FINANCIAL ITEMS (Expanded) ---
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
+    # Current Year
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    
+    # Past 5 Years (Double Entries)
     for p_year in past_years:
-        new_rows.append([data_dict["Complex Name"], f"Historic Records: {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+        new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+        new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+        
+    # Bank Statements
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
+    # --- 2. ADD MASTER ITEMS ---
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -348,34 +382,51 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
+    
     pdf.cell(0, 10, txt=clean_text(f"RE: {building_name} - APPOINTMENT AS MANAGING AGENT"), ln=1)
     pdf.ln(5)
+    
     pdf.set_font("Arial", size=10)
-    intro = (f"ATTENTION: {agent_name}\n\n"
-             f"We confirm that we have been appointed as Managing Agents of {building_name} effective from {take_on_date}.\n"
-             f"In terms of this appointment, we request you to make all documentation in your possession pertaining to "
-             f"{building_name} available for collection by us.")
+    intro = (
+        f"ATTENTION: {agent_name}\n\n"
+        f"We confirm that we have been appointed as Managing Agents of {building_name} effective from {take_on_date}.\n"
+        f"In terms of this appointment, we request you to make all documentation in your possession pertaining to "
+        f"{building_name} available for collection by us."
+    )
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    curr_fin, past_years, bank_req = calculate_financial_periods(take_on_date, year_end)
+    
+    # Dynamic items are now ALREADY in master_items (via DB), so no need to recalc here
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
+    
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
+        
     pdf.ln(5)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
     pdf.set_font("Arial", size=9)
-    banking_info = (f"Account Name: Pretor Group (Pty) Ltd\nBank: First National Bank\nBranch: Pretoria (251445)\n"
-                    f"Account Number: 514 242 794 08\nReference: S{building_code}12005X")
+    
+    banking_info = (
+        "Account Name: Pretor Group (Pty) Ltd\n"
+        "Bank: First National Bank\n"
+        "Branch: Pretoria (251445)\n"
+        "Account Number: 514 242 794 08\n"
+        f"Reference: S{building_code}12005X"
+    )
     pdf.multi_cell(0, 5, clean_text(banking_info))
+    
     pdf.ln(5)
     pdf.cell(0, 5, "Your co-operation regarding the above will be appreciated.", ln=1)
     pdf.cell(0, 5, "Yours faithfully,", ln=1)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 5, "PRETOR GROUP", ln=1)
+    
     filename = clean_text(f"{building_name}_Handover_Request.pdf")
     pdf.output(filename)
     return filename
@@ -386,6 +437,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=clean_text(f"{title}: {building_name}"), ln=1, align='C')
     pdf.ln(10)
+    
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "1. Take-On Checklist", ln=1)
     pdf.set_font("Arial", 'B', 10)
@@ -394,6 +446,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     pdf.cell(40, 10, "Action By", 1)
     pdf.cell(40, 10, "Notes", 1)
     pdf.ln()
+    
     pdf.set_font("Arial", size=9)
     for _, row in items_df.iterrows():
         status = "Received" if row['Received'] else "Pending"
@@ -402,9 +455,11 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(40, 10, clean_text(str(row['Responsibility'])[:20]), 1)
         pdf.cell(40, 10, clean_text(str(row['Notes'])[:20]), 1)
         pdf.ln()
+    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "2. Service Providers Loaded", ln=1)
+    
     if not providers_df.empty:
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(50, 10, "Provider Name", 1)
@@ -412,6 +467,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
         pdf.cell(50, 10, "Email", 1)
         pdf.cell(40, 10, "Phone", 1)
         pdf.ln()
+        
         pdf.set_font("Arial", size=9)
         for _, row in providers_df.iterrows():
             pdf.cell(50, 10, clean_text(str(row['Provider Name'])[:25]), 1)
@@ -422,6 +478,7 @@ def generate_report_pdf(building_name, items_df, providers_df, title):
     else:
         pdf.set_font("Arial", 'I', 10)
         pdf.cell(0, 10, "No service providers recorded.", ln=1)
+        
     filename = clean_text(f"{building_name}_Report.pdf")
     pdf.output(filename)
     return filename
@@ -535,12 +592,9 @@ def main():
             take_on_date = c1.date_input("Take On Date", datetime.today())
             units = c2.number_input("No of Units", min_value=1, step=1)
             st.write("### Pretor Team")
-            # --- UPDATED TEAM INPUTS ---
-            # Default Take-On Manager to Henry
             c_take1, c_take2 = st.columns(2)
             takeon_name = c_take1.text_input("Take-On Manager Name", value="Henry Janse van Rensburg")
             takeon_email = c_take2.text_input("Take-On Manager Email")
-            
             st.markdown("*(Leave Portfolio Manager blank if same as Take-On)*")
             c3, c4 = st.columns(2)
             assigned_mgr = c3.text_input("Portfolio Manager Name")
@@ -582,7 +636,7 @@ def main():
                         "Physical Address": phys_address, "Assigned Manager": assigned_mgr, "Manager Email": mgr_email, 
                         "Assistant Name": assist_name, "Assistant Email": assist_email, "Bookkeeper Name": book_name,
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
-                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email # NEW FIELDS
+                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
                     result = create_new_building(data)
                     if result == "SUCCESS":
@@ -601,40 +655,27 @@ def main():
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
-            
-            # DATA FETCHING
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
-            
-            # TEAM DETAILS
             takeon_name = str(proj_row.get('TakeOn Name', ''))
             takeon_email = str(proj_row.get('TakeOn Email', ''))
-            
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
             manager_email = str(proj_row.get('Manager Email', ''))
             assistant_name = str(proj_row.get('Assistant Name', ''))
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
-            
-            # --- CC LOGIC ---
-            # Only add Portfolio Manager to CC if they are different from TakeOn Manager
             cc_list = []
-            if manager_email and manager_email != "None" and manager_email != takeon_email:
-                cc_list.append(manager_email)
+            if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
             if assistant_email and assistant_email != "None": cc_list.append(assistant_email)
             if bookkeeper_email and bookkeeper_email != "None": cc_list.append(bookkeeper_email)
             cc_string = ",".join(cc_list)
-
-            # --- TEAM LIST FOR DROPDOWN ---
-            # Used in trackers. Include TakeOn Manager as they might sign off tasks too.
             team_list = [n for n in [takeon_name, assigned_manager, assistant_name, bookkeeper_name] if n and n != "None"]
             
-            # --- GAP FILLING FORM ---
             with st.expander("ℹ️ View / Edit Building Details", expanded=False):
                 st.caption("Fields in GREY are locked. Fields in WHITE can be updated.")
                 with st.form("update_details_form"):
@@ -642,7 +683,6 @@ def main():
                         val = str(proj_row.get(col_name, ''))
                         is_locked = bool(val.strip() != "" and val != "None")
                         return st.text_input(label, value=val, disabled=is_locked), col_name
-
                     st.markdown("**Basic Info**")
                     c1, c2 = st.columns(2)
                     u_type, k_type = smart_input("Type", "Type")
@@ -650,12 +690,10 @@ def main():
                     c3, c4 = st.columns(2)
                     u_date, k_date = smart_input("Take On Date", "Take On Date")
                     u_unit, k_unit = smart_input("No of Units", "No of Units")
-
                     st.markdown("**Internal Team**")
                     c_to1, c_to2 = st.columns(2)
                     u_to, k_to = smart_input("Take-On Manager", "TakeOn Name")
                     u_toe, k_toe = smart_input("Take-On Email", "TakeOn Email")
-                    
                     c5, c6 = st.columns(2)
                     u_mgr, k_mgr = smart_input("Portfolio Manager", "Assigned Manager")
                     u_mgre, k_mgre = smart_input("Port. Manager Email", "Manager Email")
@@ -665,7 +703,6 @@ def main():
                     c9, c10 = st.columns(2)
                     u_bk, k_bk = smart_input("Bookkeeper Name", "Bookkeeper Name")
                     u_bke, k_bke = smart_input("Bookkeeper Email", "Bookkeeper Email")
-
                     st.markdown("**Financial & Legal**")
                     u_fees, k_fees = smart_input("Mgmt Fees", "Mgmt Fees")
                     l1, l2, l3 = st.columns(3)
@@ -679,7 +716,6 @@ def main():
                     l7, l8 = st.columns(2)
                     u_aud, k_aud = smart_input("Auditor", "Auditor")
                     u_last, k_last = smart_input("Last Audit Year", "Last Audit Year")
-
                     st.markdown("**System Info**")
                     s1, s2 = st.columns(2)
                     u_bcode, k_bcode = smart_input("Building Code", "Building Code")
@@ -687,13 +723,11 @@ def main():
                     u_addr, k_addr = smart_input("Physical Address", "Physical Address")
                     u_dreq, k_dreq = smart_input("Date Docs Requested", "Date Doc Requested")
                     u_cli, k_cli = smart_input("Client Email(s)", "Client Email")
-                    
                     st.markdown("**Payroll Global Info**")
                     p1, p2, p3 = st.columns(3)
                     u_uif, k_uif = smart_input("UIF Number", "UIF Number")
                     u_coida, k_coida = smart_input("COIDA Number", "COIDA Number")
                     u_paye, k_paye = smart_input("SARS PAYE Number", "SARS PAYE Number")
-
                     if st.form_submit_button("Update Details"):
                         updates = {
                             k_type: u_type, k_prev: u_prev, k_date: u_date, k_unit: u_unit,
@@ -724,7 +758,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # --- STEP 1: PREVIOUS AGENT HANDOVER ---
             st.markdown("### 1. Previous Agent Handover Request")
             col_a, col_b = st.columns(2)
             agent_name = col_a.text_input("Previous Agent Name", value=saved_agent_name)
@@ -738,14 +771,11 @@ def main():
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
-                    
-                    # Subject & Body from Take-On Manager
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
                     body = (f"Dear {agent_name},\n\nPlease accept this email as confirmation that Pretor Group has been appointed "
                             f"as Managing Agents for {b_choice} effective from {take_on_date}.\n\n"
                             f"Please find attached our formal handover checklist.\n\n"
                             f"Regards,\n{takeon_name}\nPretor Group")
-                    
                     safe_subject = urllib.parse.quote(subject)
                     safe_body = urllib.parse.quote(body)
                     cc_param = f"&cc={cc_string}" if cc_string else ""
@@ -753,7 +783,6 @@ def main():
                     st.markdown(link, unsafe_allow_html=True)
             st.divider()
             
-            # --- STEP 2: TRACK PROGRESS ---
             st.markdown("### 2. Track Progress")
             items_df['Received'] = items_df['Received'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
             items_df['Delete'] = items_df['Delete'].apply(lambda x: True if str(x).upper() == "TRUE" else False)
@@ -764,7 +793,6 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
-                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -789,7 +817,6 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
-                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -845,7 +872,6 @@ def main():
                             success = update_service_provider_date(b_choice, selected_provider)
                             if success:
                                 subj = f"Notice of Appointment: Pretor Group - {b_choice}"
-                                # UPDATED BODY TEXT FOR PROVIDER
                                 body = (f"Dear {selected_provider},\n\n"
                                         f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
                                         f"effective {take_on_date}.\n\n"
@@ -868,7 +894,6 @@ def main():
             st.divider()
             st.markdown("### 4. Employees & Payroll")
             st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
-            
             with st.expander("Add New Employee", expanded=False):
                 with st.form("add_employee"):
                     e_name = st.text_input("Name")
@@ -880,19 +905,15 @@ def main():
                     e_pay = c2.checkbox("Payslip Received?")
                     e_id_copy = c3.checkbox("ID Copy?")
                     e_bank = c4.checkbox("Bank Conf?")
-                    
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur:
                             add_employee(b_choice, e_name, e_sur, e_id, e_paye, 
-                                         "YES" if e_con else "NO", 
-                                         "YES" if e_pay else "NO",
-                                         "YES" if e_id_copy else "NO",
-                                         "YES" if e_bank else "NO")
+                                         "YES" if e_con else "NO", "YES" if e_pay else "NO",
+                                         "YES" if e_id_copy else "NO", "YES" if e_bank else "NO")
                             st.success("Employee Added!")
                             st.rerun()
                         else:
                             st.error("Name and Surname required.")
-            
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
                 st.markdown("#### Remove Employee")
@@ -906,7 +927,7 @@ def main():
                             st.rerun()
             else:
                 st.caption("No employees loaded.")
-
+            
             st.divider()
             st.markdown("### 5. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
@@ -956,7 +977,6 @@ def main():
                             date_sent = str(row['Date Emailed'])
                             status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
                             body += f"- {service}: {name} [{status}]\n"
-                    
                     if not employees_df.empty:
                         body += "\n👥 EMPLOYEE TAKEOVER STATUS:\n"
                         for _, row in employees_df.iterrows():
@@ -972,7 +992,6 @@ def main():
                             else: docs.append("Bank Conf ❌")
                             doc_status = ", ".join(docs)
                             body += f"- {e_name}: {doc_status}\n"
-
                     body += f"\nRegards,\n{takeon_name}\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
