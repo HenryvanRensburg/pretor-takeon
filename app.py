@@ -51,10 +51,10 @@ def get_data(worksheet_name):
 def clear_cache():
     st.cache_data.clear()
 
-def add_master_item(task_name, category):
+def add_master_item(task_name, category, default_resp):
     sh = get_google_sheet()
     ws = sh.worksheet("Master")
-    ws.append_row([task_name, category])
+    ws.append_row([task_name, category, default_resp])
     clear_cache()
 
 def add_service_provider(complex_name, name, service, email, phone):
@@ -176,14 +176,16 @@ def create_new_building(data_dict):
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
-        should_copy = False
+        default_resp = str(item.get("Default Responsibility", "Previous Agent")).strip()
+        if not default_resp: default_resp = "Previous Agent"
         
+        should_copy = False
         if raw_cat == "BOTH" or raw_cat == "": should_copy = True
         elif raw_cat == "BC" and b_type == "Body Corporate": should_copy = True
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
             
         if should_copy and task:
-            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
+            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", default_resp, "FALSE", ""])
     
     if new_rows:
         ws_checklist.append_rows(new_rows)
@@ -325,6 +327,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     
+    # Filter applied in main() before calling this, so master_items is clean
     for item in master_items:
         pdf.cell(5, 5, "-", ln=0)
         pdf.multi_cell(0, 5, clean_text(str(item)))
@@ -426,11 +429,13 @@ def main():
     elif choice == "Master Schedule":
         st.subheader("Master Checklist Template")
         with st.form("add_master"):
-            c1, c2 = st.columns([3, 1])
+            c1, c2, c3 = st.columns([3, 1, 1])
             new_task = c1.text_input("Task Name")
             category = c2.selectbox("Category", ["Both", "BC", "HOA"])
+            # UPDATED: Default Responsibility
+            def_resp = c3.selectbox("Default Responsibility", ["Previous Agent", "Pretor Group", "Both"])
             if st.form_submit_button("Add Item"):
-                add_master_item(new_task, category)
+                add_master_item(new_task, category, def_resp)
                 st.success("Added!")
                 st.rerun()
         df = get_data("Master")
@@ -529,10 +534,9 @@ def main():
             with st.expander("ℹ️ View / Edit Building Details", expanded=False):
                 st.caption("Fields in GREY are locked. Fields in WHITE can be updated.")
                 with st.form("update_details_form"):
-                    # FIX: bool() wrapper ensures proper boolean type for disabled param
                     def smart_input(label, col_name):
                         val = str(proj_row.get(col_name, ''))
-                        is_locked = (val.strip() != "") and (val != "None")
+                        is_locked = bool(val.strip() != "" and val != "None")
                         return st.text_input(label, value=val, disabled=is_locked), col_name
 
                     st.markdown("**Basic Info**")
@@ -606,6 +610,7 @@ def main():
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
+                    # UPDATED FILTER FOR AGENT PDF: Exclude 'Pretor Group' (Include 'Both' & 'Previous Agent')
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
                     request_items = request_df['Task Name'].tolist()
                     pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
@@ -631,7 +636,11 @@ def main():
             
             if view_choice == "Previous Agent Tracker":
                 st.caption("Items to be received from the Previous Agent")
-                agent_view = items_df[(items_df['Responsibility'] == 'Previous Agent') & (items_df['Delete'] == False)].copy()
+                # UPDATED FILTER FOR TRACKER: Include 'Previous Agent' AND 'Both'
+                agent_view = items_df[
+                    (items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & 
+                    (items_df['Delete'] == False)
+                ].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
@@ -640,6 +649,8 @@ def main():
                     column_config={
                         "Received": st.column_config.CheckboxColumn(label="Received?"),
                         "Date Received": st.column_config.TextColumn(disabled=True),
+                        # UPDATED: Options include "Both"
+                        "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                         "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                     },
                     disabled=["Task Name", "Date Received"], hide_index=True, key="agent_editor"
@@ -649,7 +660,13 @@ def main():
                     if sh:
                         ws = sh.worksheet("Checklist")
                         save_df = edited_agent.copy()
-                        save_df['Responsibility'] = 'Previous Agent'
+                        # Note: We are editing a subset. If we save, we need to ensure we don't overwrite 
+                        # the responsibility of these items with a hardcoded value if they vary (Both vs Prev Agent).
+                        # Simpler approach: Just assume the view's logic holds or rely on task name matching.
+                        # The batch saver matches by Task Name, so as long as Task Name is unique per complex, it's safe.
+                        # We assume Responsibility doesn't change here, or if it does, we'd need it in the view.
+                        # Let's rely on the existing Responsibility in the main dataframe for the save if not in view.
+                        # Actually, 'Responsibility' is NOT in agent_cols, so it won't be updated/broken.
                         save_df['Delete'] = False
                         with st.spinner("Saving..."):
                             save_checklist_batch(ws, b_choice, save_df)
@@ -666,7 +683,7 @@ def main():
                     column_config={
                         "Received": st.column_config.CheckboxColumn(label="Completed?"),
                         "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                        "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group"]),
+                        "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                         "Delete": st.column_config.CheckboxColumn(),
                         "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                     },
@@ -735,7 +752,12 @@ def main():
             
             st.divider()
             st.markdown("### 4. Agent Follow-up (Urgent)")
-            agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'] == 'Previous Agent')]
+            # UPDATED FILTER FOR URGENT EMAIL: Include 'Both'
+            agent_pending_df = items_df[
+                (items_df['Received'] == False) & 
+                (items_df['Delete'] == False) & 
+                (items_df['Responsibility'].isin(['Previous Agent', 'Both']))
+            ]
             if agent_pending_df.empty:
                 st.success("✅ No outstanding items marked for Previous Agent.")
             else:
