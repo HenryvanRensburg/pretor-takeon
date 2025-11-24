@@ -144,21 +144,17 @@ def update_service_provider_date(complex_name, provider_name):
     return False
 
 def update_wages_status(complex_name, employee_count):
-    """Updates the Wages Sent Date and Wages Employee Count."""
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
         row_num = cell.row
-        # Assuming AJ is col 36 and AK is col 37
-        # If user added columns, we might need to find headers. For now assuming fixed based on instruction.
-        # Safer way: find headers
         headers = ws.row_values(1)
         try:
             col_date = headers.index("Wages Sent Date") + 1
             col_count = headers.index("Wages Employee Count") + 1
         except ValueError:
-            st.error("Please add 'Wages Sent Date' and 'Wages Employee Count' headers to Projects tab.")
+            # If columns missing, try adding them or warn
             return False
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -167,7 +163,6 @@ def update_wages_status(complex_name, employee_count):
         clear_cache()
         return True
     except Exception as e:
-        st.error(f"Error updating wages status: {e}")
         return False
 
 def calculate_financial_periods(take_on_date_str, year_end_str):
@@ -342,7 +337,6 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
-        
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
 
@@ -421,7 +415,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    # No recalc here, using DB items
+    # Use DB items (includes dynamic financial lines)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -689,14 +683,17 @@ def main():
             st.warning("No projects yet.")
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
-            
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
+            
+            # DATA FETCHING
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
             take_on_date = str(proj_row.get('Take On Date', ''))
+            date_requested = str(proj_row.get('Date Doc Requested', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
+            tax_number = str(proj_row.get('Tax Number', '')) # For SARS
             takeon_name = str(proj_row.get('TakeOn Name', ''))
             takeon_email = str(proj_row.get('TakeOn Email', ''))
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
@@ -705,8 +702,6 @@ def main():
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
-            
-            # WAGES STATUS
             wages_sent_date = str(proj_row.get('Wages Sent Date', ''))
             wages_count_saved = str(proj_row.get('Wages Employee Count', '0'))
             
@@ -957,30 +952,22 @@ def main():
                             st.rerun()
                         else:
                             st.error("Name and Surname required.")
-            
             if not employees_df.empty:
                 st.dataframe(employees_df, hide_index=True)
-                
-                # WAGES EMAIL BUTTON
                 try:
                     current_emp_count = len(employees_df)
                     saved_count_str = wages_count_saved
                     saved_count = int(saved_count_str) if saved_count_str and saved_count_str != "None" and saved_count_str != "" else 0
                 except:
                     saved_count = 0
-                
-                # Logic: Show if never sent OR if new employees added
                 if saved_count == 0 or current_emp_count > saved_count:
                     btn_label = "Draft Wages Handover Email" if saved_count == 0 else f"⚠️ New Employees Added - Send Update?"
-                    
                     if st.button(btn_label):
-                        # Fetch Wages Email from Settings
                         settings_df = get_data("Settings")
                         wages_email = ""
                         if not settings_df.empty:
                             row = settings_df[settings_df['Department'] == 'Wages']
                             if not row.empty: wages_email = row.iloc[0]['Email']
-                        
                         if wages_email:
                             if update_wages_status(b_choice, current_emp_count):
                                 subject = f"New Complex Take-On: {b_choice} - Employee Payroll Handover"
@@ -1012,7 +999,6 @@ def main():
                             st.error("Wages Email not found in Global Settings.")
                 else:
                     st.success(f"✅ Wages email sent on {wages_sent_date} (Count: {saved_count})")
-
                 st.markdown("#### Remove Employee")
                 emp_options = [f"{row['Name']} {row['Surname']}" for _, row in employees_df.iterrows()]
                 to_delete = st.selectbox("Select Employee to Remove", emp_options, key="del_emp_select")
@@ -1024,7 +1010,7 @@ def main():
                             st.rerun()
             else:
                 st.caption("No employees loaded.")
-
+            
             st.divider()
             st.markdown("### 5. Agent Follow-up (Urgent)")
             agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
@@ -1047,6 +1033,8 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
+            
+            # --- 6. REPORTS & COMMS (UPDATED FOR SARS) ---
             st.markdown("### 6. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
@@ -1096,6 +1084,38 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
+                
+                # --- NEW: SARS HANDOVER SECTION ---
+                st.markdown("#### SARS Department Handover")
+                settings_df = get_data("Settings")
+                sars_email = ""
+                if not settings_df.empty:
+                    row = settings_df[settings_df['Department'] == 'SARS']
+                    if not row.empty: sars_email = row.iloc[0]['Email']
+                
+                if sars_email:
+                    # Determine status
+                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                    if has_tax_num:
+                        sars_status = f"Tax Number: {tax_number}"
+                    else:
+                        sars_status = st.radio("Tax Number Status:", ["Not Registered - Please Register", "Exempt", "Pending from Agent"], key="sars_radio")
+                    
+                    if st.button("Draft SARS Email"):
+                        subj = f"New Complex Handover: {b_choice} - SARS Details"
+                        body = (f"Dear SARS Department,\n\n"
+                                f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                f"Status: {sars_status}\n\n"
+                                f"Please proceed with the necessary updates/registrations.\n\n"
+                                f"Regards,\n{takeon_name}")
+                        
+                        safe_subj = urllib.parse.quote(subj)
+                        safe_body = urllib.parse.quote(body)
+                        link = f'<a href="mailto:{sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                else:
+                    st.error("SARS Email not found in Global Settings.")
+
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
