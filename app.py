@@ -41,7 +41,6 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
-            # Auto-create missing sheets
             if worksheet_name == "ServiceProviders":
                 try:
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
@@ -154,7 +153,6 @@ def update_wages_status(complex_name, employee_count):
             col_date = headers.index("Wages Sent Date") + 1
             col_count = headers.index("Wages Employee Count") + 1
         except ValueError:
-            # If columns missing, try adding them or warn
             return False
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -163,6 +161,28 @@ def update_wages_status(complex_name, employee_count):
         clear_cache()
         return True
     except Exception as e:
+        return False
+
+def update_sars_status(complex_name):
+    """Updates the SARS Sent Date."""
+    sh = get_google_sheet()
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        try:
+            col_date = headers.index("SARS Sent Date") + 1
+        except ValueError:
+            st.error("Please add 'SARS Sent Date' header to Projects tab.")
+            return False
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        ws.update_cell(row_num, col_date, today)
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating SARS status: {e}")
         return False
 
 def calculate_financial_periods(take_on_date_str, year_end_str):
@@ -241,7 +261,8 @@ def create_new_building(data_dict):
         data_dict["TakeOn Name"],
         data_dict["TakeOn Email"],
         "", # Wages Date
-        ""  # Wages Count
+        "", # Wages Count
+        ""  # SARS Sent Date (Col 38)
     ]
     ws_projects.append_row(row_data)
     
@@ -337,6 +358,7 @@ def save_checklist_batch(ws, building_name, edited_df):
             continue
 
         current_date_in_ui = str(row['Date Received']).strip()
+        
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
 
@@ -415,7 +437,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    # Use DB items (includes dynamic financial lines)
+    # Use DB items
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -693,7 +715,7 @@ def main():
             date_requested = str(proj_row.get('Date Doc Requested', ''))
             year_end = str(proj_row.get('Year End', ''))
             building_code = str(proj_row.get('Building Code', ''))
-            tax_number = str(proj_row.get('Tax Number', '')) # For SARS
+            tax_number = str(proj_row.get('Tax Number', ''))
             takeon_name = str(proj_row.get('TakeOn Name', ''))
             takeon_email = str(proj_row.get('TakeOn Email', ''))
             assigned_manager = str(proj_row.get('Assigned Manager', ''))
@@ -704,6 +726,7 @@ def main():
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
             wages_sent_date = str(proj_row.get('Wages Sent Date', ''))
             wages_count_saved = str(proj_row.get('Wages Employee Count', '0'))
+            sars_sent_date = str(proj_row.get('SARS Sent Date', ''))
             
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
@@ -829,7 +852,6 @@ def main():
                 st.caption("Items to be received from the Previous Agent")
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
-                
                 agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                 edited_agent = st.data_editor(
                     agent_view[agent_cols],
@@ -854,7 +876,6 @@ def main():
                 st.caption("Full Master Tracker (Internal & External)")
                 full_view = items_df[items_df['Delete'] == False].copy()
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
-                
                 full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                 edited_full = st.data_editor(
                     full_view[full_cols],
@@ -1034,7 +1055,6 @@ def main():
             
             st.divider()
             
-            # --- 6. REPORTS & COMMS (UPDATED FOR SARS) ---
             st.markdown("### 6. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
@@ -1085,36 +1105,42 @@ def main():
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
                 
-                # --- NEW: SARS HANDOVER SECTION ---
+                # --- SARS HANDOVER ---
                 st.markdown("#### SARS Department Handover")
-                settings_df = get_data("Settings")
-                sars_email = ""
-                if not settings_df.empty:
-                    row = settings_df[settings_df['Department'] == 'SARS']
-                    if not row.empty: sars_email = row.iloc[0]['Email']
-                
-                if sars_email:
-                    # Determine status
-                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
-                    if has_tax_num:
-                        sars_status = f"Tax Number: {tax_number}"
-                    else:
-                        sars_status = st.radio("Tax Number Status:", ["Not Registered - Please Register", "Exempt", "Pending from Agent"], key="sars_radio")
-                    
-                    if st.button("Draft SARS Email"):
-                        subj = f"New Complex Handover: {b_choice} - SARS Details"
-                        body = (f"Dear SARS Department,\n\n"
-                                f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
-                                f"Status: {sars_status}\n\n"
-                                f"Please proceed with the necessary updates/registrations.\n\n"
-                                f"Regards,\n{takeon_name}")
-                        
-                        safe_subj = urllib.parse.quote(subj)
-                        safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
+                if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
+                    st.success(f"✅ SARS email sent on {sars_sent_date}")
                 else:
-                    st.error("SARS Email not found in Global Settings.")
+                    settings_df = get_data("Settings")
+                    sars_email = ""
+                    if not settings_df.empty:
+                        row = settings_df[settings_df['Department'] == 'SARS']
+                        if not row.empty: sars_email = row.iloc[0]['Email']
+                    
+                    if sars_email:
+                        has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                        if has_tax_num:
+                            sars_status = f"Tax Number Available: {tax_number}"
+                        else:
+                            sars_status = st.radio("Select Tax Status for Email:", 
+                                ["Not Registered - Please Register", "Exempt", "Pending from Agent"], 
+                                key="sars_radio")
+                        
+                        if st.button("Draft SARS Email & Mark Sent"):
+                            if update_sars_status(b_choice):
+                                subj = f"New Complex Handover: {b_choice} - SARS Details"
+                                body = (f"Dear SARS Department,\n\n"
+                                        f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                        f"Status: {sars_status}\n\n"
+                                        f"Please proceed with the necessary updates/registrations.\n\n"
+                                        f"Regards,\n{takeon_name}")
+                                
+                                safe_subj = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:5px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Marked as sent! Click link above.")
+                    else:
+                        st.error("SARS Email not found in Global Settings.")
 
             with col2:
                 st.subheader("Finalize")
