@@ -34,7 +34,6 @@ def get_google_sheet(retries=5, delay=2):
             error_str = str(e)
             if "429" in error_str or "Quota exceeded" in error_str:
                 wait_time = delay * (i + 1)
-                # Only show warning on later retries to avoid UI clutter
                 if i > 1:
                     st.toast(f"High traffic. Retrying connection in {wait_time}s...", icon="⏳")
                 time.sleep(wait_time)
@@ -45,66 +44,45 @@ def get_google_sheet(retries=5, delay=2):
     st.error("Could not connect to Google Sheets after multiple attempts. Please wait a minute and reload.")
     return None
 
-# --- DATA FUNCTIONS (WITH CACHING) ---
-@st.cache_data(ttl=20) # Increased TTL to reduce API calls
+# --- DATA FUNCTIONS (WITH CACHING & RETRY) ---
+@st.cache_data(ttl=20) 
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
         try:
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
-            if not data: return pd.DataFrame()
+            
+            # CRITICAL FIX: Handle empty sheets by returning empty DFs with CORRECT headers
+            if not data:
+                if worksheet_name == "Checklist":
+                    return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
+                if worksheet_name == "Projects":
+                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date"])
+                if worksheet_name == "ServiceProviders":
+                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
+                if worksheet_name == "Employees":
+                    return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"])
+                if worksheet_name == "Arrears":
+                    return pd.DataFrame(columns=["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"])
+                if worksheet_name == "CouncilAccounts":
+                    return pd.DataFrame(columns=["Complex Name", "Account Number", "Service Covered", "Current Balance"])
+                if worksheet_name == "Trustees":
+                    return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "Email", "Phone"])
+                if worksheet_name == "Settings":
+                    return pd.DataFrame(columns=["Department", "Email"])
+                return pd.DataFrame()
+
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
             return df
-        except Exception as e:
-            # Auto-create missing sheets
-            if worksheet_name == "ServiceProviders":
-                try:
-                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
-                except:
-                    return pd.DataFrame()
-            if worksheet_name == "Employees":
-                try:
-                    cols = ["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", 
-                            "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"]
-                    sh.add_worksheet("Employees", 100, 9)
-                    sh.worksheet("Employees").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
-            if worksheet_name == "Arrears":
-                try:
-                    cols = ["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"]
-                    sh.add_worksheet("Arrears", 100, 6)
-                    sh.worksheet("Arrears").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
-            if worksheet_name == "CouncilAccounts":
-                try:
-                    cols = ["Complex Name", "Account Number", "Service Covered", "Current Balance"]
-                    sh.add_worksheet("CouncilAccounts", 100, 4)
-                    sh.worksheet("CouncilAccounts").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
+        except gspread.exceptions.WorksheetNotFound:
+            # If sheet doesn't exist, return empty DF with headers so app doesn't crash
             if worksheet_name == "Trustees":
-                try:
-                    cols = ["Complex Name", "Name", "Surname", "Email", "Phone"]
-                    sh.add_worksheet("Trustees", 100, 5)
-                    sh.worksheet("Trustees").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
-            if worksheet_name == "Settings":
-                try:
-                    sh.add_worksheet("Settings", 100, 2)
-                    sh.worksheet("Settings").append_row(["Department", "Email"])
-                    return pd.DataFrame(columns=["Department", "Email"])
-                except:
-                    return pd.DataFrame()
+                 return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "Email", "Phone"])
+            return pd.DataFrame()
+        except Exception as e:
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -375,7 +353,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- UPDATED: SMART ROW CREATION ---
+# --- SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     if not sh: return "CONNECTION_ERROR"
@@ -481,9 +459,7 @@ def update_building_details_batch(complex_name, updates):
         row_num = cell.row
         headers = ws.row_values(1) 
         headers = [h.strip() for h in headers]
-        
         cells_to_update = []
-        
         for col_name, new_value in updates.items():
             if col_name in headers:
                 col_index = headers.index(col_name) + 1
@@ -502,7 +478,6 @@ def update_building_details_batch(complex_name, updates):
                                 col_index = headers.index(alt) + 1
                                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
                                 break
-        
         if cells_to_update:
             ws.update_cells(cells_to_update)
             clear_cache()
@@ -517,17 +492,8 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(building_name)
-        headers = ws.row_values(1)
-        headers = [h.strip() for h in headers]
-        
-        if "Agent Name" in headers:
-            idx = headers.index("Agent Name") + 1
-            ws.update_cell(cell.row, idx, agent_name)
-            
-        if "Agent Email" in headers:
-            idx = headers.index("Agent Email") + 1
-            ws.update_cell(cell.row, idx, agent_email)
-            
+        ws.update_cell(cell.row, 24, agent_name)
+        ws.update_cell(cell.row, 25, agent_email)
         clear_cache()
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
@@ -546,11 +512,9 @@ def save_checklist_batch(ws, building_name, edited_df_list):
         task = row['Task Name']
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
-        
         if 'Delete' in row and row['Delete']:
             rows_to_delete.append(row_idx)
             continue
-
         current_date_in_ui = str(row['Date Received']).strip()
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
@@ -582,11 +546,9 @@ def finalize_project_db(building_name):
     ws = sh.worksheet("Projects")
     cell = ws.find(building_name)
     final_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    headers = ws.row_values(1)
-    if "Is_Finalized" in headers:
-        ws.update_cell(cell.row, headers.index("Is_Finalized")+1, "TRUE")
-    if "Finalized Date" in headers:
-        ws.update_cell(cell.row, headers.index("Finalized Date")+1, final_date)
+    ws.update_cell(cell.row, 22, "TRUE")
+    ws.update_cell(cell.row, 23, final_date)
+    ws.update_cell(cell.row, 20, final_date)
     clear_cache()
     return final_date
 
@@ -740,10 +702,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1240,12 +1200,13 @@ def main():
                         cc_param = f"&cc={cc_string}" if cc_string else ""
                         link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
-
+            
             st.divider()
             
             # --- 4. REPORTS & COMMS (Including SARS) ---
-            st.markdown("### 4. SARS Department Handover")
-            st.info("Notify the SARS department about the new complex registration.")
+            st.markdown("### 4. Reports & Comms")
+            
+            st.markdown("#### 🏛️ SARS Department Handover")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
