@@ -59,7 +59,6 @@ def get_data(worksheet_name):
                     return pd.DataFrame()
             if worksheet_name == "Arrears":
                 try:
-                    # UPDATED HEADERS FOR ARREARS
                     cols = ["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"]
                     sh.add_worksheet("Arrears", 100, 6)
                     sh.worksheet("Arrears").append_row(cols)
@@ -97,7 +96,6 @@ def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, i
     ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
-# UPDATED: ARREARS FUNCTION
 def add_arrears_item(complex_name, unit, amount, attorney_name, attorney_email, attorney_phone):
     sh = get_google_sheet()
     ws = sh.worksheet("Arrears")
@@ -233,30 +231,40 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
+        
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 # Default Feb
+        ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
+        
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
+        
         candidate_year = request_end_date.year
-        if start_month > request_end_date.month: candidate_year -= 1
-        current_fin_year_start = datetime(candidate_year, start_month, 1)
-        if current_fin_year_start > request_end_date:
-            current_fin_year_start -= relativedelta(years=1)
+        candidate_start = datetime(candidate_year, start_month, 1)
+        
+        if candidate_start > request_end_date:
+            candidate_start = candidate_start - relativedelta(years=1)
+            
+        current_fin_year_start = candidate_start
+            
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
+        
         past_years = []
-        pointer_end_date = current_fin_year_start - timedelta(days=1)
+        pointer_date = current_fin_year_start - timedelta(days=1)
+        
         for i in range(5):
-            past_years.append(pointer_end_date.strftime('%d %B %Y'))
-            pointer_end_date = pointer_end_date - relativedelta(years=1)
+            past_years.append(pointer_date.strftime('%d %B %Y'))
+            pointer_date = pointer_date - relativedelta(years=1)
+            
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
+        
         return current_period_str, past_years, bank_str
     except Exception as e:
         return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
@@ -322,6 +330,7 @@ def create_new_building(data_dict, has_arrears):
     new_rows = []
     
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     for p_year in past_years:
         new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
@@ -490,6 +499,7 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
+    # Use DB items
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -1097,7 +1107,7 @@ def main():
             else:
                 st.caption("No employees loaded.")
             
-            # --- STEP 5: ARREARS & LEGAL ---
+            # --- STEP 5: ARREARS & LEGAL (NEW!) ---
             st.divider()
             st.markdown("### 5. Arrears & Legal")
             st.info("Add units with outstanding levies for handover to Debt Collection.")
@@ -1182,6 +1192,8 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
+            
+            # --- 7. REPORTS & COMMS (SARS VISIBILITY FIX) ---
             st.markdown("### 7. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
@@ -1287,6 +1299,7 @@ def main():
                     else:
                         st.info("Please enter an email address to proceed.")
 
+            st.markdown("---")
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
