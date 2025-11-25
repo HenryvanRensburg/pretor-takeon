@@ -225,24 +225,30 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- DATE LOGIC ---
+# --- DATE LOGIC (V5) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
+    """
+    Calculates periods based on Take On Date and Year End.
+    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
         
+        # 1. Request End Date = Last Day BEFORE Take On
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
         
+        # 2. Parse Year End Month
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 
+        ye_month = 2 # Default Feb
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
         
+        # 3. Calculate Start of Current Period
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
         
@@ -257,10 +263,12 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
             
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
+        # 4. Calculate SINGLE Historic Block (5 Years)
         historic_end_date = current_fin_year_start - timedelta(days=1)
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
             
+        # 5. Bank Statements
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -268,7 +276,8 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-def create_new_building(data_dict, has_arrears):
+# UPDATED: create_new_building (Removed has_arrears)
+def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
     
@@ -328,36 +337,22 @@ def create_new_building(data_dict, has_arrears):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # 1. Financial Items (Auto Assign to "Financial" Heading)
+    # 1. Financial Items
     curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
-    # Format: [Name, Task, Rec, Date, Notes, Resp, Del, CompBy, Heading]
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
 
-    # 2. ARREARS ITEMS
-    if has_arrears:
-        arrears_tasks = [
-            "Arrears: List of all debt already handed over to attorneys",
-            "Arrears: Up-to-date list of all outstanding debt with full history",
-            "Arrears: Attorneys contact details",
-            "Arrears: Status report on current legal matters"
-        ]
-        for task in arrears_tasks:
-            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-
-    # 3. Master Items
+    # 2. Master Items
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
         default_resp = str(item.get("Default Responsibility", "Previous Agent")).strip()
         if not default_resp: default_resp = "Previous Agent"
         
-        task_heading = str(item.get("Task Heading", "Take-On")).strip() # Default to Take-On
+        task_heading = str(item.get("Task Heading", "Take-On")).strip()
         if not task_heading: task_heading = "Take-On"
 
         should_copy = False
@@ -409,9 +404,6 @@ def update_project_agent_details(building_name, agent_name, agent_email):
         st.error(f"Could not save agent details: {e}")
 
 def save_checklist_batch(ws, building_name, edited_df_list):
-    """
-    Saves multiple dataframes from the split view.
-    """
     if not edited_df_list: return
     
     # Concatenate all edited frames
@@ -674,10 +666,7 @@ def main():
             new_task = c1.text_input("Task Name")
             category = c2.selectbox("Category", ["Both", "BC", "HOA"])
             def_resp = c3.selectbox("Default Responsibility", ["Previous Agent", "Pretor Group", "Both"])
-            # NEW HEADINGS
-            new_headings = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee"]
-            heading = c4.selectbox("Task Heading", new_headings)
-            
+            heading = c4.selectbox("Task Heading", ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"])
             if st.form_submit_button("Add Item"):
                 add_master_item(new_task, category, def_resp, heading)
                 st.success("Added!")
@@ -753,10 +742,6 @@ def main():
             exp_code = s2.text_input("Expense Code")
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
-            
-            st.write("### Operational")
-            has_arrears = st.checkbox("Are there Arrears / Legal Matters?")
-            
             submitted = st.form_submit_button("Create Complex")
             if submitted:
                 if complex_name:
@@ -771,7 +756,8 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
-                    result = create_new_building(data, has_arrears)
+                    # Removed the second argument (has_arrears) as it was deleted in previous step
+                    result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
                     elif result == "EXISTS":
