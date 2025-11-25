@@ -230,22 +230,19 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
         
-        # 1. Request End Date
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
         
-        # 2. Parse Year End Month
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 # Default Feb
+        ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
         
-        # 3. Calculate Start of Current Period
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
         
@@ -260,12 +257,10 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
             
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
-        # 4. Calculate SINGLE Historic Block (5 Years)
         historic_end_date = current_fin_year_start - timedelta(days=1)
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
             
-        # 5. Bank Statements
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -336,14 +331,12 @@ def create_new_building(data_dict, has_arrears):
     # 1. Financial Items
     curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
-    # Format: [Name, Task, Rec, Date, Notes, Resp, Del, CompBy, Heading]
-    # Assign to "Financial" Heading
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
 
-    # 2. ARREARS ITEMS (Assign to "Legal")
+    # 2. ARREARS
     if has_arrears:
         arrears_tasks = [
             "Arrears: List of all debt already handed over to attorneys",
@@ -361,8 +354,8 @@ def create_new_building(data_dict, has_arrears):
         default_resp = str(item.get("Default Responsibility", "Previous Agent")).strip()
         if not default_resp: default_resp = "Previous Agent"
         
-        task_heading = str(item.get("Task Heading", "General")).strip()
-        if not task_heading: task_heading = "General"
+        task_heading = str(item.get("Task Heading", "Take-On")).strip()
+        if not task_heading: task_heading = "Take-On"
 
         should_copy = False
         if raw_cat == "BOTH" or raw_cat == "": should_copy = True
@@ -414,6 +407,7 @@ def update_project_agent_details(building_name, agent_name, agent_email):
 
 def save_checklist_batch(ws, building_name, edited_df_list):
     if not edited_df_list: return
+    
     final_edited_df = pd.concat(edited_df_list)
     
     all_rows = ws.get_all_values()
@@ -452,6 +446,7 @@ def save_checklist_batch(ws, building_name, edited_df_list):
         cells_to_update.append(gspread.Cell(row_idx, 3, rec_val))
         cells_to_update.append(gspread.Cell(row_idx, 4, date_val))
         cells_to_update.append(gspread.Cell(row_idx, 5, row.get('Notes', '')))
+        # Do NOT update Responsibility (Column 6) to preserve values like "Previous Agent"
         cells_to_update.append(gspread.Cell(row_idx, 7, "FALSE"))
         cells_to_update.append(gspread.Cell(row_idx, 8, user_val))
 
@@ -497,7 +492,6 @@ def add_logo_to_pdf(pdf):
     except:
         pass
 
-# UPDATED PDF GENERATOR TO GROUP BY HEADINGS
 def generate_appointment_pdf(building_name, request_df, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
@@ -517,18 +511,14 @@ def generate_appointment_pdf(building_name, request_df, agent_name, take_on_date
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     
-    # ORDERED HEADINGS
+    # GROUP BY HEADING IN PDF
     preferred_order = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Building Compliance", "Insurance", "City Council", "Employee", "General"]
     
-    # Group by Task Heading
     if 'Task Heading' in request_df.columns:
-        # Get unique headings present
         present_headings = request_df['Task Heading'].unique()
-        # Sort them based on preferred order, putting unknowns at the end
         sorted_headings = sorted(present_headings, key=lambda x: preferred_order.index(x) if x in preferred_order else 99)
         
         for heading in sorted_headings:
-            # Skip empty headings or "None"
             if not heading or heading == "None": continue
             
             pdf.set_font("Arial", 'B', 9)
@@ -541,7 +531,6 @@ def generate_appointment_pdf(building_name, request_df, agent_name, take_on_date
                 pdf.cell(5, 5, "-", ln=0)
                 pdf.multi_cell(0, 5, clean_text(str(row['Task Name'])))
     else:
-        # Fallback if no headings
         for _, row in request_df.iterrows():
             pdf.cell(5, 5, "-", ln=0)
             pdf.multi_cell(0, 5, clean_text(str(row['Task Name'])))
@@ -702,9 +691,7 @@ def main():
             new_task = c1.text_input("Task Name")
             category = c2.selectbox("Category", ["Both", "BC", "HOA"])
             def_resp = c3.selectbox("Default Responsibility", ["Previous Agent", "Pretor Group", "Both"])
-            # UPDATED HEADINGS
-            new_headings = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General"]
-            heading = c4.selectbox("Task Heading", new_headings)
+            heading = c4.selectbox("Task Heading", ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General"])
             
             if st.form_submit_button("Add Item"):
                 add_master_item(new_task, category, def_resp, heading)
@@ -942,13 +929,9 @@ def main():
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
-                    
-                    # Filter items by "Previous Agent" (Ignore Pretor Group)
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
-                    
-                    # UPDATED: PDF GENERATOR CALL WITH DF
+                    request_items = request_df['Task Name'].tolist()
                     pdf_file = generate_appointment_pdf(b_choice, request_df, agent_name, take_on_date, year_end, building_code)
-                    
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
@@ -1054,17 +1037,19 @@ def main():
                         sec_df = full_view[full_view['Task Heading'] == sec]
                         if not sec_df.empty:
                             st.markdown(f"#### {sec}")
-                            cols_to_show = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                            cols_to_show = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                             edited_sec = st.data_editor(
                                 sec_df[cols_to_show],
                                 column_config={
                                     "Received": st.column_config.CheckboxColumn(label="Completed?"),
                                     "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                                    "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
+                                    # REMOVED RESPONSIBILITY (HIDDEN)
                                     "Delete": st.column_config.CheckboxColumn(),
                                     "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                                 },
-                                disabled=["Task Name", "Date Received"], hide_index=True, key=f"editor_full_{sec}"
+                                disabled=["Task Name", "Date Received"],
+                                hide_index=True,
+                                key=f"editor_full_{sec}"
                             )
                             all_edited_dfs.append(edited_sec)
                             
@@ -1072,17 +1057,19 @@ def main():
                     unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
-                        cols_to_show = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                        cols_to_show = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                         edited_unk = st.data_editor(
                             unknown_df[cols_to_show],
                             column_config={
                                 "Received": st.column_config.CheckboxColumn(label="Completed?"),
                                 "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                                "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
+                                # REMOVED RESPONSIBILITY (HIDDEN)
                                 "Delete": st.column_config.CheckboxColumn(),
                                 "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                             },
-                            disabled=["Task Name", "Date Received"], hide_index=True, key="editor_full_unknown"
+                            disabled=["Task Name", "Date Received"],
+                            hide_index=True,
+                            key="editor_full_unknown"
                         )
                         all_edited_dfs.append(edited_unk)
                         
@@ -1096,13 +1083,13 @@ def main():
                             st.rerun()
                 else:
                      # Legacy
-                    full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                    full_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
                         column_config={
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
+                            # REMOVED RESPONSIBILITY (HIDDEN)
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
@@ -1140,7 +1127,7 @@ def main():
 
             st.divider()
             
-            # --- 4. REPORTS & COMMS ---
+            # --- 4. REPORTS & COMMS (Including SARS) ---
             st.markdown("### 4. Reports & Comms")
             
             st.markdown("#### 🏛️ SARS Department Handover")
@@ -1340,6 +1327,7 @@ def main():
                 with st.form("add_arrears"):
                     a_unit = st.text_input("Unit Number")
                     a_amount = st.number_input("Outstanding Amount", min_value=0.0, step=0.01, format="%.2f")
+                    # NO CHECKBOX AS REQUESTED
                     a_attorney_name = st.text_input("Attorney Name")
                     a_attorney_email = st.text_input("Attorney Email")
                     a_attorney_phone = st.text_input("Attorney Phone")
@@ -1390,7 +1378,8 @@ def main():
 
             st.divider()
             
-            # --- 8. CLIENT UPDATE ---
+            # --- 8. REPORTS & COMMS ---
+            st.markdown("### 8. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
