@@ -9,6 +9,7 @@ import urllib.parse
 import re
 import os
 import calendar
+import time # Required for retry logic
 
 # --- CONFIGURATION ---
 SCOPES = [
@@ -16,58 +17,80 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# --- GOOGLE SHEETS CONNECTION ---
-def get_google_sheet():
-    try:
-        credentials_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
-        client = gspread.authorize(creds)
-        sheet = client.open("Pretor TakeOn DB")
-        return sheet
-    except Exception as e:
-        st.error(f"Connection Error. Please check Secrets. Details: {e}")
-        return None
+# --- GOOGLE SHEETS CONNECTION (WITH RETRY LOGIC) ---
+def get_google_sheet(retries=3, delay=2):
+    """
+    Attempts to connect to Google Sheets with a retry mechanism 
+    to handle '429 Quota Exceeded' errors.
+    """
+    for i in range(retries):
+        try:
+            credentials_dict = st.secrets["gcp_service_account"]
+            creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+            client = gspread.authorize(creds)
+            sheet = client.open("Pretor TakeOn DB")
+            return sheet
+        except Exception as e:
+            if "429" in str(e) or "Quota exceeded" in str(e):
+                if i < retries - 1:
+                    time.sleep(delay * (i + 1)) # Exponential backoff: 2s, 4s, 6s
+                    continue
+            st.error(f"Connection Error: {e}")
+            return None
+    return None
 
-# --- DATA FUNCTIONS (WITH CACHING) ---
-@st.cache_data(ttl=10) 
+# --- DATA FUNCTIONS (WITH CACHING & RETRY) ---
+@st.cache_data(ttl=15) # Increased TTL slightly to reduce read frequency
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
         try:
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
-            
-            # Handle empty sheet case gracefully
-            if not data:
-                # Define default columns for critical sheets to prevent KeyErrors
-                if worksheet_name == "Checklist":
-                    return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
-                if worksheet_name == "Projects":
-                    return pd.DataFrame(columns=["Complex Name"])
-                return pd.DataFrame()
-
+            if not data: return pd.DataFrame()
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
             return df
-            
-        except gspread.exceptions.WorksheetNotFound:
-            # If sheet is missing, create empty DF with expected columns
-            if worksheet_name == "Checklist":
-                 return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
-            if worksheet_name == "ServiceProviders":
-                return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
-            if worksheet_name == "Employees":
-                return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"])
-            if worksheet_name == "Arrears":
-                return pd.DataFrame(columns=["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"])
-            if worksheet_name == "CouncilAccounts":
-                return pd.DataFrame(columns=["Complex Name", "Account Number", "Service Covered", "Current Balance"])
-            if worksheet_name == "Settings":
-                return pd.DataFrame(columns=["Department", "Email"])
-            return pd.DataFrame()
-            
         except Exception as e:
+            # Auto-create missing sheets
+            if worksheet_name == "ServiceProviders":
+                try:
+                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
+                except:
+                    return pd.DataFrame()
+            if worksheet_name == "Employees":
+                try:
+                    cols = ["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", 
+                            "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"]
+                    sh.add_worksheet("Employees", 100, 9)
+                    sh.worksheet("Employees").append_row(cols)
+                    return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
+            if worksheet_name == "Arrears":
+                try:
+                    cols = ["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"]
+                    sh.add_worksheet("Arrears", 100, 6)
+                    sh.worksheet("Arrears").append_row(cols)
+                    return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
+            if worksheet_name == "CouncilAccounts":
+                try:
+                    cols = ["Complex Name", "Account Number", "Service Covered", "Current Balance"]
+                    sh.add_worksheet("CouncilAccounts", 100, 4)
+                    sh.worksheet("CouncilAccounts").append_row(cols)
+                    return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
+            if worksheet_name == "Settings":
+                try:
+                    sh.add_worksheet("Settings", 100, 2)
+                    sh.worksheet("Settings").append_row(["Department", "Email"])
+                    return pd.DataFrame(columns=["Department", "Email"])
+                except:
+                    return pd.DataFrame()
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -76,36 +99,42 @@ def clear_cache():
 
 def add_master_item(task_name, category, default_resp, task_heading):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Master")
     ws.append_row([task_name, category, default_resp, task_heading])
     clear_cache()
 
 def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("ServiceProviders")
     ws.append_row([complex_name, name, service, email, phone, ""])
     clear_cache()
 
 def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Employees")
     ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
 def add_arrears_item(complex_name, unit, amount, attorney_name, attorney_email, attorney_phone):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Arrears")
     ws.append_row([complex_name, unit, amount, attorney_name, attorney_email, attorney_phone])
     clear_cache()
 
 def add_council_account(complex_name, account_num, service, balance):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("CouncilAccounts")
     ws.append_row([complex_name, account_num, service, balance])
     clear_cache()
 
 def delete_employee(complex_name, name, surname):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Employees")
     try:
         rows = ws.get_all_values()
@@ -127,6 +156,7 @@ def delete_employee(complex_name, name, surname):
 
 def delete_arrears_item(complex_name, unit, amount):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Arrears")
     try:
         rows = ws.get_all_values()
@@ -148,6 +178,7 @@ def delete_arrears_item(complex_name, unit, amount):
 
 def delete_council_account(complex_name, account_num, service):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("CouncilAccounts")
     try:
         rows = ws.get_all_values()
@@ -169,6 +200,7 @@ def delete_council_account(complex_name, account_num, service):
 
 def save_global_settings(settings_dict):
     sh = get_google_sheet()
+    if not sh: return False
     try:
         ws = sh.worksheet("Settings")
         ws.clear()
@@ -184,6 +216,7 @@ def save_global_settings(settings_dict):
 
 def update_service_provider_date(complex_name, provider_name):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("ServiceProviders")
     try:
         cell_list = ws.findall(complex_name)
@@ -204,6 +237,7 @@ def update_service_provider_date(complex_name, provider_name):
 
 def update_wages_status(complex_name, employee_count):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -225,6 +259,7 @@ def update_wages_status(complex_name, employee_count):
 
 def update_sars_status(complex_name, reset=False):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -246,6 +281,27 @@ def update_sars_status(complex_name, reset=False):
         return True
     except Exception as e:
         st.error(f"Error updating SARS status: {e}")
+        return False
+
+def update_trustee_status(complex_name):
+    sh = get_google_sheet()
+    if not sh: return False
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        if "Trustee Email Sent Date" not in headers:
+             st.error("Please add 'Trustee Email Sent Date' header to Projects tab.")
+             return False
+        
+        col_date = headers.index("Trustee Email Sent Date") + 1
+        today = datetime.now().strftime("%Y-%m-%d")
+        ws.update_cell(row_num, col_date, today)
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating Trustee status: {e}")
         return False
 
 # --- DATE LOGIC ---
@@ -277,16 +333,15 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- UPDATED: SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
+    if not sh: return "CONNECTION_ERROR"
     ws_projects = sh.worksheet("Projects")
     
     existing_names = ws_projects.col_values(1)
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
 
-    # Smart Mapping
     headers_raw = ws_projects.row_values(1)
     headers = [h.strip() for h in headers_raw]
     row_data = [""] * len(headers)
@@ -376,6 +431,7 @@ def create_new_building(data_dict):
 
 def update_building_details_batch(complex_name, updates):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -390,7 +446,6 @@ def update_building_details_batch(complex_name, updates):
                 col_index = headers.index(col_name) + 1
                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
             else:
-                # Fuzzy match
                 alt_map = {
                     "Assigned Manager": ["Portfolio Manager", "Portfolio Manager Name"],
                     "Manager Email": ["Portfolio Manager Email"],
@@ -415,11 +470,22 @@ def update_building_details_batch(complex_name, updates):
 
 def update_project_agent_details(building_name, agent_name, agent_email):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(building_name)
-        ws.update_cell(cell.row, 24, agent_name)
-        ws.update_cell(cell.row, 25, agent_email)
+        # Safer way to find column index
+        headers = ws.row_values(1)
+        headers = [h.strip() for h in headers]
+        
+        if "Agent Name" in headers:
+            idx = headers.index("Agent Name") + 1
+            ws.update_cell(cell.row, idx, agent_name)
+            
+        if "Agent Email" in headers:
+            idx = headers.index("Agent Email") + 1
+            ws.update_cell(cell.row, idx, agent_email)
+            
         clear_cache()
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
@@ -468,12 +534,16 @@ def save_checklist_batch(ws, building_name, edited_df_list):
 
 def finalize_project_db(building_name):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Projects")
     cell = ws.find(building_name)
     final_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.update_cell(cell.row, 22, "TRUE")
-    ws.update_cell(cell.row, 23, final_date)
-    ws.update_cell(cell.row, 20, final_date)
+    # Find columns safely
+    headers = ws.row_values(1)
+    if "Is_Finalized" in headers:
+        ws.update_cell(cell.row, headers.index("Is_Finalized")+1, "TRUE")
+    if "Finalized Date" in headers:
+        ws.update_cell(cell.row, headers.index("Finalized Date")+1, final_date)
     clear_cache()
     return final_date
 
@@ -776,6 +846,7 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
+                    # Removed the second argument (has_arrears) as it was deleted in previous step
                     result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
@@ -959,8 +1030,11 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
+                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
+                    # --- UPDATED HEADINGS ORDER ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
+                    
                     all_edited_dfs = []
                     for sec in sections:
                         sec_df = agent_view[agent_view['Task Heading'] == sec]
@@ -978,6 +1052,7 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                     
+                    # Uncategorized
                     unknown_df = agent_view[~agent_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -1002,6 +1077,7 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
+                    # Legacy Fallback
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1050,6 +1126,7 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                             
+                    # Uncategorized
                     unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -1078,6 +1155,7 @@ def main():
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
+                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
@@ -1123,9 +1201,8 @@ def main():
             st.divider()
             
             # --- 4. REPORTS & COMMS (Including SARS) ---
-            st.markdown("### 4. Reports & Comms")
-            
-            st.markdown("#### 🏛️ SARS Department Handover")
+            st.markdown("### 4. SARS Department Handover")
+            st.info("Notify the SARS department about the new complex registration.")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
