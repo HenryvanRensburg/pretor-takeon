@@ -289,6 +289,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
+# --- UPDATED: SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -297,27 +298,70 @@ def create_new_building(data_dict):
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
 
-    row_data = [
-        data_dict["Complex Name"], data_dict["Type"], data_dict["Previous Agents"], str(data_dict["Take On Date"]),
-        data_dict["No of Units"], data_dict["Mgmt Fees"], data_dict["Erf No"], data_dict["SS Number"],
-        data_dict["CSOS Number"], data_dict["VAT Number"], data_dict["Tax Number"], data_dict["Year End"],
-        data_dict["Auditor"], data_dict["Last Audit Year"], data_dict["Building Code"], data_dict["Expense Code"],
-        data_dict["Physical Address"], data_dict["Assigned Manager"], str(data_dict["Date Doc Requested"]), "", 
-        data_dict["Client Email"], "FALSE", "", "", "", data_dict["Manager Email"], data_dict["Assistant Name"],
-        data_dict["Assistant Email"], data_dict["Bookkeeper Name"], data_dict["Bookkeeper Email"], "", "", "",
-        data_dict["TakeOn Name"], data_dict["TakeOn Email"], "", "", ""
-    ]
+    # Smart Mapping: Read headers first
+    headers = ws_projects.row_values(1)
+    
+    # Init row with empty strings
+    row_data = [""] * len(headers)
+    
+    # Map known keys to headers (Case insensitive if needed, but strict here for safety)
+    # Ensure your Google Sheet headers match these keys EXACTLY
+    key_map = {
+        "Complex Name": "Complex Name",
+        "Type": "Type",
+        "Previous Agents": "Previous Agents",
+        "Take On Date": "Take On Date",
+        "No of Units": "No of Units",
+        "Mgmt Fees": "Mgmt Fees",
+        "Erf No": "Erf No",
+        "SS Number": "SS Number",
+        "CSOS Number": "CSOS Number",
+        "VAT Number": "VAT Number",
+        "Tax Number": "Tax Number",
+        "Year End": "Year End",
+        "Auditor": "Auditor",
+        "Last Audit Year": "Last Audit Year",
+        "Building Code": "Building Code",
+        "Expense Code": "Expense Code",
+        "Physical Address": "Physical Address",
+        "Assigned Manager": "Assigned Manager",
+        "Date Doc Requested": "Date Doc Requested",
+        "Client Email": "Client Email",
+        "Manager Email": "Manager Email",
+        "Assistant Name": "Assistant Name",
+        "Assistant Email": "Assistant Email",
+        "Bookkeeper Name": "Bookkeeper Name",
+        "Bookkeeper Email": "Bookkeeper Email",
+        "UIF Number": "UIF Number",
+        "COIDA Number": "COIDA Number",
+        "SARS PAYE Number": "SARS PAYE Number",
+        "TakeOn Name": "TakeOn Name",
+        "TakeOn Email": "TakeOn Email"
+    }
+
+    # Fill row based on headers
+    for i, header in enumerate(headers):
+        # Find which key maps to this header
+        for key, sheet_header in key_map.items():
+            if header.strip() == sheet_header:
+                # Insert data if key exists
+                val = data_dict.get(key, "")
+                if key == "Take On Date" or key == "Date Doc Requested":
+                    val = str(val)
+                row_data[i] = val
+                break
+    
+    # Append the smart row
     ws_projects.append_row(row_data)
     
+    # Checklist Logic
     ws_master = sh.worksheet("Master")
     raw_master = ws_master.get_all_values()
     if not raw_master: return False
     headers = raw_master.pop(0)
     master_data = [dict(zip(headers, row)) for row in raw_master]
     
-    # --- RESTORED MISSING LINE ---
     b_type = data_dict["Type"] 
-    
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
@@ -346,6 +390,7 @@ def create_new_building(data_dict):
     clear_cache() 
     return "SUCCESS"
 
+# --- UPDATE LOGIC REMAINS THE SAME ---
 def update_building_details_batch(complex_name, updates):
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
@@ -580,8 +625,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -713,6 +760,8 @@ def main():
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
             
+            # REMOVED ARREARS CHECKBOX
+            
             submitted = st.form_submit_button("Create Complex")
             if submitted:
                 if complex_name:
@@ -725,9 +774,9 @@ def main():
                         "Physical Address": phys_address, "Assigned Manager": assigned_mgr, "Manager Email": mgr_email, 
                         "Assistant Name": assist_name, "Assistant Email": assist_email, "Bookkeeper Name": book_name,
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
-                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
+                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email,
+                        "UIF Number": "", "COIDA Number": "", "SARS PAYE Number": "" # Defaults
                     }
-                    # NO has_arrears arg
                     result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
@@ -1044,7 +1093,7 @@ def main():
                         column_config={
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
+                            # REMOVED RESPONSIBILITY (HIDDEN)
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
@@ -1083,9 +1132,8 @@ def main():
             st.divider()
             
             # --- 4. REPORTS & COMMS (Including SARS) ---
-            st.markdown("### 4. Reports & Comms")
-            
-            st.markdown("#### 🏛️ SARS Department Handover")
+            st.markdown("### 4. SARS Department Handover")
+            st.info("Notify the SARS department about the new complex registration.")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
