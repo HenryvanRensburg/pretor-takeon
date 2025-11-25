@@ -57,6 +57,14 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=cols)
                 except:
                     return pd.DataFrame()
+            if worksheet_name == "Trustees":
+                try:
+                    cols = ["Complex Name", "Name", "Surname", "Email", "Phone"]
+                    sh.add_worksheet("Trustees", 100, 5)
+                    sh.worksheet("Trustees").append_row(cols)
+                    return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
             if worksheet_name == "Arrears":
                 try:
                     cols = ["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"]
@@ -104,6 +112,12 @@ def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, i
     ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
+def add_trustee(complex_name, name, surname, email, phone):
+    sh = get_google_sheet()
+    ws = sh.worksheet("Trustees")
+    ws.append_row([complex_name, name, surname, email, phone])
+    clear_cache()
+
 def add_arrears_item(complex_name, unit, amount, attorney_name, attorney_email, attorney_phone):
     sh = get_google_sheet()
     ws = sh.worksheet("Arrears")
@@ -135,6 +149,27 @@ def delete_employee(complex_name, name, surname):
             return False
     except Exception as e:
         st.error(f"Error deleting employee: {e}")
+        return False
+
+def delete_trustee(complex_name, name, surname):
+    sh = get_google_sheet()
+    ws = sh.worksheet("Trustees")
+    try:
+        rows = ws.get_all_values()
+        row_to_delete = None
+        for idx, row in enumerate(rows):
+            if len(row) > 2:
+                if row[0] == complex_name and row[1] == name and row[2] == surname:
+                    row_to_delete = idx + 1
+                    break
+        if row_to_delete:
+            ws.delete_rows(row_to_delete)
+            clear_cache()
+            return True
+        else:
+            return False
+    except Exception as e:
+        st.error(f"Error deleting trustee: {e}")
         return False
 
 def delete_arrears_item(complex_name, unit, amount):
@@ -260,6 +295,29 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
+def update_trustee_status(complex_name):
+    """Updates the Trustee Email Sent Date."""
+    sh = get_google_sheet()
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        # If column is missing, script might fail or need manual addition.
+        # Assuming it exists or we handle error
+        if "Trustee Email Sent Date" not in headers:
+             st.error("Please add 'Trustee Email Sent Date' header to Projects tab.")
+             return False
+        
+        col_date = headers.index("Trustee Email Sent Date") + 1
+        today = datetime.now().strftime("%Y-%m-%d")
+        ws.update_cell(row_num, col_date, today)
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating Trustee status: {e}")
+        return False
+
 # --- DATE LOGIC ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
@@ -289,14 +347,12 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-def create_new_building(data_dict, has_arrears):
+def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
-    
     existing_names = ws_projects.col_values(1)
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
-
     row_data = [
         data_dict["Complex Name"], data_dict["Type"], data_dict["Previous Agents"], str(data_dict["Take On Date"]),
         data_dict["No of Units"], data_dict["Mgmt Fees"], data_dict["Erf No"], data_dict["SS Number"],
@@ -305,36 +361,22 @@ def create_new_building(data_dict, has_arrears):
         data_dict["Physical Address"], data_dict["Assigned Manager"], str(data_dict["Date Doc Requested"]), "", 
         data_dict["Client Email"], "FALSE", "", "", "", data_dict["Manager Email"], data_dict["Assistant Name"],
         data_dict["Assistant Email"], data_dict["Bookkeeper Name"], data_dict["Bookkeeper Email"], "", "", "",
-        data_dict["TakeOn Name"], data_dict["TakeOn Email"], "", "", ""
+        data_dict["TakeOn Name"], data_dict["TakeOn Email"], "", "", "",
+        "" # Trustee Email Sent Date (Col 39)
     ]
     ws_projects.append_row(row_data)
-    
     ws_master = sh.worksheet("Master")
     raw_master = ws_master.get_all_values()
     if not raw_master: return False
     headers = raw_master.pop(0)
     master_data = [dict(zip(headers, row)) for row in raw_master]
-    
-    b_type = data_dict["Type"] 
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
-    
     curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-
-    if has_arrears:
-        arrears_tasks = [
-            "Arrears: List of all debt already handed over to attorneys",
-            "Arrears: Up-to-date list of all outstanding debt with full history",
-            "Arrears: Attorneys contact details",
-            "Arrears: Status report on current legal matters"
-        ]
-        for task in arrears_tasks:
-            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", "", "Legal"])
-
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -348,10 +390,8 @@ def create_new_building(data_dict, has_arrears):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
         if should_copy and task:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", default_resp, "FALSE", "", task_heading])
-    
     if new_rows:
         ws_checklist.append_rows(new_rows)
-    
     clear_cache() 
     return "SUCCESS"
 
@@ -438,8 +478,6 @@ def finalize_project_db(building_name):
     ws.update_cell(cell.row, 20, final_date)
     clear_cache()
     return final_date
-
-# --- PDF GENERATORS ---
 
 def clean_text(text):
     if text is None: return ""
@@ -591,10 +629,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -726,9 +762,6 @@ def main():
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
             
-            st.write("### Operational")
-            has_arrears = st.checkbox("Are there Arrears / Legal Matters?")
-            
             submitted = st.form_submit_button("Create Complex")
             if submitted:
                 if complex_name:
@@ -743,7 +776,7 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
-                    result = create_new_building(data, has_arrears)
+                    result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
                     elif result == "EXISTS":
@@ -760,8 +793,6 @@ def main():
         else:
             b_choice = st.selectbox("Select Complex", projects['Complex Name'])
             proj_row = projects[projects['Complex Name'] == b_choice].iloc[0]
-            
-            # DATA FETCHING
             client_email = str(proj_row.get('Client Email', ''))
             saved_agent_name = str(proj_row.get('Agent Name', ''))
             saved_agent_email = str(proj_row.get('Agent Email', ''))
@@ -781,7 +812,8 @@ def main():
             wages_sent_date = str(proj_row.get('Wages Sent Date', ''))
             wages_count_saved = str(proj_row.get('Wages Employee Count', '0'))
             sars_sent_date = str(proj_row.get('SARS Sent Date', ''))
-            
+            trustee_email_sent = str(proj_row.get('Trustee Email Sent Date', ''))
+
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
             if assistant_email and assistant_email != "None": cc_list.append(assistant_email)
@@ -871,7 +903,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -883,6 +914,12 @@ def main():
                 council_df = all_council[all_council['Complex Name'] == b_choice].copy()
             else:
                 council_df = pd.DataFrame()
+
+            all_trustees = get_data("Trustees")
+            if not all_trustees.empty:
+                trustees_df = all_trustees[all_trustees['Complex Name'] == b_choice].copy()
+            else:
+                trustees_df = pd.DataFrame()
 
             st.markdown("### 1. Previous Agent Handover Request")
             col_a, col_b = st.columns(2)
@@ -920,11 +957,8 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
-                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- UPDATED HEADINGS ORDER ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
-                    
                     all_edited_dfs = []
                     for sec in sections:
                         sec_df = agent_view[agent_view['Task Heading'] == sec]
@@ -942,7 +976,6 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                     
-                    # Uncategorized
                     unknown_df = agent_view[~agent_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -967,7 +1000,6 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
-                    # Legacy Fallback
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1016,7 +1048,6 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                             
-                    # Uncategorized
                     unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -1045,7 +1076,6 @@ def main():
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
-                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
@@ -1090,7 +1120,7 @@ def main():
 
             st.divider()
             
-            # --- 4. REPORTS & COMMS (Including SARS) ---
+            # --- 4. REPORTS & COMMS (SARS) ---
             st.markdown("### 4. SARS Department Handover")
             st.info("Notify the SARS department about the new complex registration.")
             
@@ -1325,9 +1355,70 @@ def main():
             else:
                 st.caption("No employees loaded.")
             
-            # --- STEP 8: ARREARS & LEGAL ---
+            # --- STEP 8: TRUSTEES (NEW!) ---
             st.divider()
-            st.markdown("### 8. Arrears & Legal")
+            st.markdown("### 8. Trustees")
+            st.info("Load Trustee details to request account opening.")
+            
+            with st.expander("Add Trustee", expanded=False):
+                with st.form("add_trustee"):
+                    t_name = st.text_input("First Name")
+                    t_sur = st.text_input("Surname")
+                    t_email = st.text_input("Email Address")
+                    t_phone = st.text_input("Cellphone Number")
+                    
+                    if st.form_submit_button("Add Trustee"):
+                        if t_name and t_sur:
+                            add_trustee(b_choice, t_name, t_sur, t_email, t_phone)
+                            st.success("Trustee added!")
+                            st.rerun()
+                        else:
+                            st.error("Name and Surname required.")
+            
+            if not trustees_df.empty:
+                st.dataframe(trustees_df[["Name", "Surname", "Email", "Phone"]], hide_index=True)
+                
+                # Check if already sent
+                trustee_sent = str(proj_row.get('Trustee Email Sent Date', ''))
+                
+                if trustee_sent and trustee_sent != "None" and trustee_sent != "":
+                    st.success(f"✅ Trustee account request sent on {trustee_sent}")
+                else:
+                    if st.button("Draft Bookkeeper Email (Open Accounts)"):
+                        if bookkeeper_email and bookkeeper_email != "None":
+                            if update_trustee_status(b_choice):
+                                subject = f"Request to Open Trustee Accounts: {b_choice}"
+                                body = (f"Dear {bookkeeper_name},\n\n"
+                                        f"Please kindly open separate Trustee accounts for the following members of {b_choice}:\n\n")
+                                
+                                for _, row in trustees_df.iterrows():
+                                    body += f"- {row['Name']} {row['Surname']} (Email: {row['Email']}, Cell: {row['Phone']})\n"
+                                
+                                body += f"\nRegards,\n{takeon_name}\nPretor Group"
+                                
+                                safe_subject = urllib.parse.quote(subject)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{bookkeeper_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Bookkeeper Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status updated! Click link above.")
+                        else:
+                            st.error("No Bookkeeper Email assigned to this complex. Please update Building Details.")
+                
+                # Delete option
+                st.markdown("#### Remove Trustee")
+                tr_options = [f"{row['Name']} {row['Surname']}" for _, row in trustees_df.iterrows()]
+                del_tr = st.selectbox("Select Trustee to Remove", tr_options, key="del_tr_select")
+                if st.button("Delete Selected Trustee"):
+                    parts = del_tr.split(" ", 1)
+                    if len(parts) == 2:
+                        if delete_trustee(b_choice, parts[0], parts[1]):
+                            st.success(f"Deleted {del_tr}")
+                            st.rerun()
+            else:
+                st.caption("No trustees loaded.")
+
+            st.divider()
+            st.markdown("### 9. Arrears & Legal")
             st.info("Add units with outstanding levies for handover to Debt Collection.")
             
             with st.expander("Add Arrears Item", expanded=False):
@@ -1385,8 +1476,8 @@ def main():
             
             st.divider()
             
-            # --- 8. INSURANCE HANDOVER ---
-            st.markdown("### 8. Insurance Handover")
+            # --- 10. INSURANCE HANDOVER ---
+            st.markdown("### 10. Insurance Handover")
             
             # Broker Details Form
             with st.expander("Update Broker Details (If not in Service Providers)", expanded=True):
@@ -1466,8 +1557,8 @@ def main():
 
             st.divider()
             
-            # --- 9. REPORTS ---
-            st.markdown("### 9. Reports & Comms")
+            # --- 11. REPORTS ---
+            st.markdown("### 11. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
@@ -1494,21 +1585,6 @@ def main():
                             date_sent = str(row['Date Emailed'])
                             status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
                             body += f"- {service}: {name} [{status}]\n"
-                    if not employees_df.empty:
-                        body += "\n👥 EMPLOYEE TAKEOVER STATUS:\n"
-                        for _, row in employees_df.iterrows():
-                            e_name = f"{row['Name']} {row['Surname']}"
-                            docs = []
-                            if str(row.get('Contract Received', '')).upper() == 'YES': docs.append("Contract ✅")
-                            else: docs.append("Contract ❌")
-                            if str(row.get('Payslip Received', '')).upper() == 'YES': docs.append("Payslip ✅")
-                            else: docs.append("Payslip ❌")
-                            if str(row.get('ID Copy Received', '')).upper() == 'YES': docs.append("ID ✅")
-                            else: docs.append("ID ❌")
-                            if str(row.get('Bank Confirmation', '')).upper() == 'YES': docs.append("Bank Conf ✅")
-                            else: docs.append("Bank Conf ❌")
-                            doc_status = ", ".join(docs)
-                            body += f"- {e_name}: {doc_status}\n"
 
                     body += f"\nRegards,\n{takeon_name}\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
