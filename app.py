@@ -36,51 +36,38 @@ def get_data(worksheet_name):
         try:
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
-            if not data: return pd.DataFrame()
+            
+            # Handle empty sheet case gracefully
+            if not data:
+                # Define default columns for critical sheets to prevent KeyErrors
+                if worksheet_name == "Checklist":
+                    return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
+                if worksheet_name == "Projects":
+                    return pd.DataFrame(columns=["Complex Name"])
+                return pd.DataFrame()
+
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
-            # FIX: Strip whitespace from column names to prevent mismatches
             df.columns = df.columns.str.strip()
             return df
-        except Exception as e:
-            # Auto-create missing sheets
+            
+        except gspread.exceptions.WorksheetNotFound:
+            # If sheet is missing, create empty DF with expected columns
+            if worksheet_name == "Checklist":
+                 return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
             if worksheet_name == "ServiceProviders":
-                try:
-                    return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
-                except:
-                    return pd.DataFrame()
+                return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
             if worksheet_name == "Employees":
-                try:
-                    cols = ["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", 
-                            "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"]
-                    sh.add_worksheet("Employees", 100, 9)
-                    sh.worksheet("Employees").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
+                return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "ID Number", "PAYE Number", "Contract Received", "Payslip Received", "ID Copy Received", "Bank Confirmation"])
             if worksheet_name == "Arrears":
-                try:
-                    cols = ["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"]
-                    sh.add_worksheet("Arrears", 100, 6)
-                    sh.worksheet("Arrears").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
+                return pd.DataFrame(columns=["Complex Name", "Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"])
             if worksheet_name == "CouncilAccounts":
-                try:
-                    cols = ["Complex Name", "Account Number", "Service Covered", "Current Balance"]
-                    sh.add_worksheet("CouncilAccounts", 100, 4)
-                    sh.worksheet("CouncilAccounts").append_row(cols)
-                    return pd.DataFrame(columns=cols)
-                except:
-                    return pd.DataFrame()
+                return pd.DataFrame(columns=["Complex Name", "Account Number", "Service Covered", "Current Balance"])
             if worksheet_name == "Settings":
-                try:
-                    sh.add_worksheet("Settings", 100, 2)
-                    sh.worksheet("Settings").append_row(["Department", "Email"])
-                    return pd.DataFrame(columns=["Department", "Email"])
-                except:
-                    return pd.DataFrame()
+                return pd.DataFrame(columns=["Department", "Email"])
+            return pd.DataFrame()
+            
+        except Exception as e:
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -261,50 +248,36 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- DATE LOGIC (V5) ---
+# --- DATE LOGIC ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
-        
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
-        
-        months = {
-            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
-            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
-        }
+        months = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
         ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
-        
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
-        
         candidate_year = request_end_date.year
-        if start_month > request_end_date.month:
-             candidate_year -= 1
-        
+        if start_month > request_end_date.month: candidate_year -= 1
         current_fin_year_start = datetime(candidate_year, start_month, 1)
-        
         if current_fin_year_start > request_end_date:
             current_fin_year_start -= relativedelta(years=1)
-            
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
-        
         historic_end_date = current_fin_year_start - timedelta(days=1)
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
-            
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
-        
         return current_period_str, historic_period_str, bank_str
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- UPDATED: CREATE BUILDING WITH ROBUST MAPPING ---
+# --- UPDATED: SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -313,13 +286,11 @@ def create_new_building(data_dict):
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
 
-    # 1. Read headers and clean them
+    # Smart Mapping
     headers_raw = ws_projects.row_values(1)
-    headers = [h.strip() for h in headers_raw] # Strip whitespace
-    
+    headers = [h.strip() for h in headers_raw]
     row_data = [""] * len(headers)
     
-    # 2. Define mappings (Key in Data Dict -> Possible Header Names)
     field_mappings = {
         "Complex Name": ["Complex Name"],
         "Type": ["Type"],
@@ -351,14 +322,12 @@ def create_new_building(data_dict):
         "SARS PAYE Number": ["SARS PAYE Number"],
         "TakeOn Name": ["TakeOn Name"],
         "TakeOn Email": ["TakeOn Email"],
-        # Add placeholder mappings for tracking columns to avoid shifting
         "Wages Sent Date": ["Wages Sent Date"],
         "Wages Employee Count": ["Wages Employee Count"],
         "SARS Sent Date": ["SARS Sent Date"],
         "Trustee Email Sent Date": ["Trustee Email Sent Date"]
     }
 
-    # 3. Fill row based on headers found
     for i, header in enumerate(headers):
         for key, possible_names in field_mappings.items():
             if header in possible_names:
@@ -370,7 +339,6 @@ def create_new_building(data_dict):
     
     ws_projects.append_row(row_data)
     
-    # Checklist Logic
     ws_master = sh.worksheet("Master")
     raw_master = ws_master.get_all_values()
     if not raw_master: return False
@@ -413,18 +381,16 @@ def update_building_details_batch(complex_name, updates):
         cell = ws.find(complex_name)
         row_num = cell.row
         headers = ws.row_values(1) 
-        # Strip whitespace from headers for robust matching
         headers = [h.strip() for h in headers]
         
         cells_to_update = []
         
         for col_name, new_value in updates.items():
-            # Try to match input key to header
             if col_name in headers:
                 col_index = headers.index(col_name) + 1
                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
             else:
-                # Try fuzzy match for specific troublesome fields
+                # Fuzzy match
                 alt_map = {
                     "Assigned Manager": ["Portfolio Manager", "Portfolio Manager Name"],
                     "Manager Email": ["Portfolio Manager Email"],
@@ -510,8 +476,6 @@ def finalize_project_db(building_name):
     ws.update_cell(cell.row, 20, final_date)
     clear_cache()
     return final_date
-
-# --- PDF GENERATORS ---
 
 def clean_text(text):
     if text is None: return ""
@@ -663,8 +627,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -994,8 +960,7 @@ def main():
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
                 if 'Task Heading' in agent_view.columns:
-                    sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General", "Other"]
-                    
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     all_edited_dfs = []
                     for sec in sections:
                         sec_df = agent_view[agent_view['Task Heading'] == sec]
@@ -1062,7 +1027,7 @@ def main():
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
                 
                 if 'Task Heading' in full_view.columns:
-                    sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General", "Other"]
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     all_edited_dfs = []
                     
                     for sec in sections:
@@ -1157,8 +1122,10 @@ def main():
 
             st.divider()
             
-            # --- 4. REPORTS & COMMS (SARS) ---
-            st.markdown("### 4. SARS Department Handover")
+            # --- 4. REPORTS & COMMS (Including SARS) ---
+            st.markdown("### 4. Reports & Comms")
+            
+            st.markdown("#### 🏛️ SARS Department Handover")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
