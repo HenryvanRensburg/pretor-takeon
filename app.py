@@ -225,43 +225,68 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- DATE LOGIC ---
+# --- ROBUST DATE CALCULATION LOGIC (V4) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
+    """
+    Calculates periods based on Take On Date and Year End.
+    Logic:
+    1. Request End Date = Take On Date - 1 Day (Last day of previous month)
+    2. Start Date = 1st Day of the Month FOLLOWING the Year End Month.
+    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        
+        # 1. Request End Date = Last Day BEFORE Take On
+        # e.g. 1 Dec -> 30 Nov
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
         
+        # 2. Parse Year End Month
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 
+        ye_month = 2 # Default Feb
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
         
+        # 3. Calculate Start of Current Period (1st of month AFTER YE)
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
         
+        # Find the correct year for the start date
+        # Start Date must be <= Request End Date
         candidate_year = request_end_date.year
-        candidate_start = datetime(candidate_year, start_month, 1)
         
-        if candidate_start > request_end_date:
-            candidate_start = candidate_start - relativedelta(years=1)
-            
-        current_fin_year_start = candidate_start
+        # If FY Start Month is AFTER Request End Month, it must be previous year
+        if start_month > request_end_date.month:
+             candidate_year -= 1
+        
+        # Force Day 1
+        current_fin_year_start = datetime(candidate_year, start_month, 1)
+        
+        # Safety: If we accidentally went past the end date (rare edge case), go back a year
+        if current_fin_year_start > request_end_date:
+            current_fin_year_start -= relativedelta(years=1)
             
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
+        # 4. Calculate Past 5 Years
+        # We need the END DATE of the previous years.
+        # The first historic year ended 1 day before the Current Start Date.
         past_years = []
-        pointer_date = current_fin_year_start - timedelta(days=1)
+        pointer_end_date = current_fin_year_start - timedelta(days=1)
         
         for i in range(5):
-            past_years.append(pointer_date.strftime('%d %B %Y'))
-            pointer_date = pointer_date - relativedelta(years=1)
+            # pointer_date is the specific Year End (e.g., 28 Feb 2025)
+            past_years.append(pointer_end_date.strftime('%d %B %Y'))
+            # Move back exactly 1 year (relativedelta handles leap years automatically)
+            pointer_end_date = pointer_end_date - relativedelta(years=1)
             
+        # 5. Bank Statements: 1 Month prior (1st of that month)
+        # e.g. Take On 1 Dec -> 1 Nov
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -269,6 +294,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
 
+# UPDATED: create_new_building to collapse historic lines
 def create_new_building(data_dict, has_arrears):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -329,14 +355,21 @@ def create_new_building(data_dict, has_arrears):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
+    # 1. Financial Items (Calculated with V4 Logic)
     curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
-    for p_year in past_years:
-        new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
-        new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: FY Ending {p_year}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    
+    # CONSOLIDATED HISTORIC ITEMS (1 Line for Financials, 1 Line for Correspondence)
+    # Use the most recent historic year end from the list
+    most_recent_historic_ye = past_years[0]
+    
+    new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: Past 5 Financial Years (Ending {most_recent_historic_ye})", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: Past 5 Financial Years (Ending {most_recent_historic_ye})", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
+    # 2. ARREARS ITEMS
     if has_arrears:
         arrears_tasks = [
             "Arrears: List of all debt already handed over to attorneys",
@@ -347,6 +380,7 @@ def create_new_building(data_dict, has_arrears):
         for task in arrears_tasks:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
+    # 3. Master Items
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -1192,8 +1226,6 @@ def main():
                         st.markdown(link, unsafe_allow_html=True)
             
             st.divider()
-            
-            # --- 7. REPORTS & COMMS (SARS VISIBILITY FIX) ---
             st.markdown("### 7. Reports & Comms")
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
