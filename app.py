@@ -39,6 +39,7 @@ def get_data(worksheet_name):
             if not data: return pd.DataFrame()
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
+            # FIX: Strip whitespace from column names to prevent mismatches
             df.columns = df.columns.str.strip()
             return df
         except Exception as e:
@@ -260,36 +261,50 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- DATE LOGIC ---
+# --- DATE LOGIC (V5) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
-        months = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+        
+        months = {
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+        }
         ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
+        
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
+        
         candidate_year = request_end_date.year
-        if start_month > request_end_date.month: candidate_year -= 1
+        if start_month > request_end_date.month:
+             candidate_year -= 1
+        
         current_fin_year_start = datetime(candidate_year, start_month, 1)
+        
         if current_fin_year_start > request_end_date:
             current_fin_year_start -= relativedelta(years=1)
+            
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
+        
         historic_end_date = current_fin_year_start - timedelta(days=1)
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
+            
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
+        
         return current_period_str, historic_period_str, bank_str
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- UPDATED: SMART ROW CREATION ---
+# --- UPDATED: CREATE BUILDING WITH ROBUST MAPPING ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -298,60 +313,61 @@ def create_new_building(data_dict):
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
 
-    # Smart Mapping: Read headers first
-    headers = ws_projects.row_values(1)
+    # 1. Read headers and clean them
+    headers_raw = ws_projects.row_values(1)
+    headers = [h.strip() for h in headers_raw] # Strip whitespace
     
-    # Init row with empty strings
     row_data = [""] * len(headers)
     
-    # Map known keys to headers (Case insensitive if needed, but strict here for safety)
-    # Ensure your Google Sheet headers match these keys EXACTLY
-    key_map = {
-        "Complex Name": "Complex Name",
-        "Type": "Type",
-        "Previous Agents": "Previous Agents",
-        "Take On Date": "Take On Date",
-        "No of Units": "No of Units",
-        "Mgmt Fees": "Mgmt Fees",
-        "Erf No": "Erf No",
-        "SS Number": "SS Number",
-        "CSOS Number": "CSOS Number",
-        "VAT Number": "VAT Number",
-        "Tax Number": "Tax Number",
-        "Year End": "Year End",
-        "Auditor": "Auditor",
-        "Last Audit Year": "Last Audit Year",
-        "Building Code": "Building Code",
-        "Expense Code": "Expense Code",
-        "Physical Address": "Physical Address",
-        "Assigned Manager": "Assigned Manager",
-        "Date Doc Requested": "Date Doc Requested",
-        "Client Email": "Client Email",
-        "Manager Email": "Manager Email",
-        "Assistant Name": "Assistant Name",
-        "Assistant Email": "Assistant Email",
-        "Bookkeeper Name": "Bookkeeper Name",
-        "Bookkeeper Email": "Bookkeeper Email",
-        "UIF Number": "UIF Number",
-        "COIDA Number": "COIDA Number",
-        "SARS PAYE Number": "SARS PAYE Number",
-        "TakeOn Name": "TakeOn Name",
-        "TakeOn Email": "TakeOn Email"
+    # 2. Define mappings (Key in Data Dict -> Possible Header Names)
+    field_mappings = {
+        "Complex Name": ["Complex Name"],
+        "Type": ["Type"],
+        "Previous Agents": ["Previous Agents"],
+        "Take On Date": ["Take On Date"],
+        "No of Units": ["No of Units"],
+        "Mgmt Fees": ["Mgmt Fees"],
+        "Erf No": ["Erf No"],
+        "SS Number": ["SS Number"],
+        "CSOS Number": ["CSOS Number"],
+        "VAT Number": ["VAT Number"],
+        "Tax Number": ["Tax Number"],
+        "Year End": ["Year End", "Financial Year End"],
+        "Auditor": ["Auditor"],
+        "Last Audit Year": ["Last Audit Year"],
+        "Building Code": ["Building Code"],
+        "Expense Code": ["Expense Code"],
+        "Physical Address": ["Physical Address", "Address"],
+        "Assigned Manager": ["Assigned Manager", "Portfolio Manager", "Portfolio Manager Name"],
+        "Date Doc Requested": ["Date Doc Requested"],
+        "Client Email": ["Client Email"],
+        "Manager Email": ["Manager Email", "Portfolio Manager Email"],
+        "Assistant Name": ["Assistant Name"],
+        "Assistant Email": ["Assistant Email"],
+        "Bookkeeper Name": ["Bookkeeper Name"],
+        "Bookkeeper Email": ["Bookkeeper Email"],
+        "UIF Number": ["UIF Number"],
+        "COIDA Number": ["COIDA Number"],
+        "SARS PAYE Number": ["SARS PAYE Number"],
+        "TakeOn Name": ["TakeOn Name"],
+        "TakeOn Email": ["TakeOn Email"],
+        # Add placeholder mappings for tracking columns to avoid shifting
+        "Wages Sent Date": ["Wages Sent Date"],
+        "Wages Employee Count": ["Wages Employee Count"],
+        "SARS Sent Date": ["SARS Sent Date"],
+        "Trustee Email Sent Date": ["Trustee Email Sent Date"]
     }
 
-    # Fill row based on headers
+    # 3. Fill row based on headers found
     for i, header in enumerate(headers):
-        # Find which key maps to this header
-        for key, sheet_header in key_map.items():
-            if header.strip() == sheet_header:
-                # Insert data if key exists
+        for key, possible_names in field_mappings.items():
+            if header in possible_names:
                 val = data_dict.get(key, "")
-                if key == "Take On Date" or key == "Date Doc Requested":
+                if key in ["Take On Date", "Date Doc Requested"]:
                     val = str(val)
                 row_data[i] = val
                 break
     
-    # Append the smart row
     ws_projects.append_row(row_data)
     
     # Checklist Logic
@@ -390,7 +406,6 @@ def create_new_building(data_dict):
     clear_cache() 
     return "SUCCESS"
 
-# --- UPDATE LOGIC REMAINS THE SAME ---
 def update_building_details_batch(complex_name, updates):
     sh = get_google_sheet()
     ws = sh.worksheet("Projects")
@@ -398,11 +413,32 @@ def update_building_details_batch(complex_name, updates):
         cell = ws.find(complex_name)
         row_num = cell.row
         headers = ws.row_values(1) 
+        # Strip whitespace from headers for robust matching
+        headers = [h.strip() for h in headers]
+        
         cells_to_update = []
+        
         for col_name, new_value in updates.items():
-            if new_value and col_name in headers:
+            # Try to match input key to header
+            if col_name in headers:
                 col_index = headers.index(col_name) + 1
                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
+            else:
+                # Try fuzzy match for specific troublesome fields
+                alt_map = {
+                    "Assigned Manager": ["Portfolio Manager", "Portfolio Manager Name"],
+                    "Manager Email": ["Portfolio Manager Email"],
+                    "Physical Address": ["Address"],
+                    "Year End": ["Financial Year End"]
+                }
+                for key, alts in alt_map.items():
+                    if col_name == key:
+                        for alt in alts:
+                            if alt in headers:
+                                col_index = headers.index(alt) + 1
+                                cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
+                                break
+        
         if cells_to_update:
             ws.update_cells(cells_to_update)
             clear_cache()
@@ -474,6 +510,8 @@ def finalize_project_db(building_name):
     ws.update_cell(cell.row, 20, final_date)
     clear_cache()
     return final_date
+
+# --- PDF GENERATORS ---
 
 def clean_text(text):
     if text is None: return ""
@@ -625,10 +663,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -760,8 +796,6 @@ def main():
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
             
-            # REMOVED ARREARS CHECKBOX
-            
             submitted = st.form_submit_button("Create Complex")
             if submitted:
                 if complex_name:
@@ -774,8 +808,7 @@ def main():
                         "Physical Address": phys_address, "Assigned Manager": assigned_mgr, "Manager Email": mgr_email, 
                         "Assistant Name": assist_name, "Assistant Email": assist_email, "Bookkeeper Name": book_name,
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
-                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email,
-                        "UIF Number": "", "COIDA Number": "", "SARS PAYE Number": "" # Defaults
+                        "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
                     result = create_new_building(data)
                     if result == "SUCCESS":
@@ -906,7 +939,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -961,9 +993,7 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
-                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General", "Other"]
                     
                     all_edited_dfs = []
@@ -983,7 +1013,6 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                     
-                    # Uncategorized
                     unknown_df = agent_view[~agent_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -1008,7 +1037,6 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
-                    # Legacy Fallback
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1047,7 +1075,7 @@ def main():
                                 column_config={
                                     "Received": st.column_config.CheckboxColumn(label="Completed?"),
                                     "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                                    # REMOVED RESPONSIBILITY (HIDDEN)
+                                    "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                                     "Delete": st.column_config.CheckboxColumn(),
                                     "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                                 },
@@ -1057,7 +1085,6 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                             
-                    # Uncategorized
                     unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -1086,14 +1113,13 @@ def main():
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
-                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
                         column_config={
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            # REMOVED RESPONSIBILITY (HIDDEN)
+                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
@@ -1131,9 +1157,8 @@ def main():
 
             st.divider()
             
-            # --- 4. REPORTS & COMMS (Including SARS) ---
+            # --- 4. REPORTS & COMMS (SARS) ---
             st.markdown("### 4. SARS Department Handover")
-            st.info("Notify the SARS department about the new complex registration.")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
