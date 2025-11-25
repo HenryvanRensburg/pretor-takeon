@@ -225,18 +225,12 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- CORRECTED DATE LOGIC (V5) ---
+# --- DATE LOGIC (V5) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
-    """
-    Calculates periods:
-    - Request End = Take On - 1 Day.
-    - Current Start = 1st of Month following Year End.
-    - Historic Block = 5 Years range ending 1 day before Current Start.
-    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
         
-        # 1. Request End Date = Last Day BEFORE Take On
+        # 1. Request End Date
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
         
@@ -245,7 +239,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 # Default Feb
+        ye_month = 2 
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
@@ -267,11 +261,8 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
         # 4. Calculate SINGLE Historic Block (5 Years)
-        # Historic End = 1 day before Current Start
         historic_end_date = current_fin_year_start - timedelta(days=1)
-        # Historic Start = 5 years before Current Start
         historic_start_date = current_fin_year_start - relativedelta(years=5)
-        
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
             
         # 5. Bank Statements
@@ -282,8 +273,8 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# UPDATED: create_new_building uses single historic string
-def create_new_building(data_dict, has_arrears):
+# UPDATED: create_new_building (Removed has_arrears)
+def create_new_building(data_dict):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
     
@@ -343,29 +334,15 @@ def create_new_building(data_dict, has_arrears):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # 1. Financial Items (V5 Logic: Consolidated Historic)
+    # 1. Financial Items
     curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
-    
-    # Single Block Items
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
-    
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
-    # 2. ARREARS
-    if has_arrears:
-        arrears_tasks = [
-            "Arrears: List of all debt already handed over to attorneys",
-            "Arrears: Up-to-date list of all outstanding debt with full history",
-            "Arrears: Attorneys contact details",
-            "Arrears: Status report on current legal matters"
-        ]
-        for task in arrears_tasks:
-            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", ""])
-
-    # 3. Master Items
+    # 2. Master Items
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -518,7 +495,6 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
-    # Use DB items
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
@@ -757,9 +733,6 @@ def main():
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
             
-            st.write("### Operational")
-            has_arrears = st.checkbox("Are there Arrears / Legal Matters?")
-            
             submitted = st.form_submit_button("Create Complex")
             if submitted:
                 if complex_name:
@@ -774,7 +747,8 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
-                    result = create_new_building(data, has_arrears)
+                    # Removed the second argument (has_arrears) as it was deleted in previous step
+                    result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
                     elif result == "EXISTS":
@@ -1135,6 +1109,7 @@ def main():
                 with st.form("add_arrears"):
                     a_unit = st.text_input("Unit Number")
                     a_amount = st.number_input("Outstanding Amount", min_value=0.0, step=0.01, format="%.2f")
+                    # NO CHECKBOX AS REQUESTED
                     a_attorney_name = st.text_input("Attorney Name")
                     a_attorney_email = st.text_input("Attorney Email")
                     a_attorney_phone = st.text_input("Attorney Phone")
@@ -1169,14 +1144,11 @@ def main():
                             att_email = row['Attorney Email']
                             att_phone = row['Attorney Phone']
                             
-                            attorney_details = []
-                            if att_name: attorney_details.append(f"Name: {att_name}")
-                            if att_email: attorney_details.append(f"Email: {att_email}")
-                            if att_phone: attorney_details.append(f"Phone: {att_phone}")
-                            
-                            att_info_str = ", ".join(attorney_details) if attorney_details else "None"
-
-                            body += f"- Unit {u}: R{amt} (Attorney: {att_info_str})\n"
+                            att_info = "None"
+                            if att_name:
+                                att_info = f"{att_name} (Email: {att_email}, Phone: {att_phone})"
+                                
+                            body += f"- Unit {u}: R{amt} (Attorney: {att_info})\n"
                             
                         body += f"\nRegards,\n{takeon_name}\nPretor Group"
                         
@@ -1265,7 +1237,6 @@ def main():
                 
                 # --- NEW: SARS HANDOVER SECTION (VISIBLE) ---
                 st.markdown("#### 🏛️ SARS Department Handover")
-                st.info("Notify the SARS department about the new complex registration.")
                 
                 # Logic: Check sent date.
                 if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
