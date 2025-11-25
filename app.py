@@ -289,12 +289,14 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-def create_new_building(data_dict):
+def create_new_building(data_dict, has_arrears):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
+    
     existing_names = ws_projects.col_values(1)
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
+
     row_data = [
         data_dict["Complex Name"], data_dict["Type"], data_dict["Previous Agents"], str(data_dict["Take On Date"]),
         data_dict["No of Units"], data_dict["Mgmt Fees"], data_dict["Erf No"], data_dict["SS Number"],
@@ -306,18 +308,33 @@ def create_new_building(data_dict):
         data_dict["TakeOn Name"], data_dict["TakeOn Email"], "", "", ""
     ]
     ws_projects.append_row(row_data)
+    
     ws_master = sh.worksheet("Master")
     raw_master = ws_master.get_all_values()
     if not raw_master: return False
     headers = raw_master.pop(0)
     master_data = [dict(zip(headers, row)) for row in raw_master]
+    
+    b_type = data_dict["Type"] 
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
+    
     curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+
+    if has_arrears:
+        arrears_tasks = [
+            "Arrears: List of all debt already handed over to attorneys",
+            "Arrears: Up-to-date list of all outstanding debt with full history",
+            "Arrears: Attorneys contact details",
+            "Arrears: Status report on current legal matters"
+        ]
+        for task in arrears_tasks:
+            new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", "Previous Agent", "FALSE", "", "Legal"])
+
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -331,8 +348,10 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
         if should_copy and task:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", default_resp, "FALSE", "", task_heading])
+    
     if new_rows:
         ws_checklist.append_rows(new_rows)
+    
     clear_cache() 
     return "SUCCESS"
 
@@ -420,6 +439,8 @@ def finalize_project_db(building_name):
     clear_cache()
     return final_date
 
+# --- PDF GENERATORS ---
+
 def clean_text(text):
     if text is None: return ""
     text = str(text)
@@ -436,7 +457,7 @@ def add_logo_to_pdf(pdf):
     except:
         pass
 
-def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
+def generate_appointment_pdf(building_name, request_df, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
     add_logo_to_pdf(pdf)
@@ -454,8 +475,8 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
     preferred_order = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Building Compliance", "Insurance", "City Council", "Employee", "General"]
-    if 'Task Heading' in master_items.columns:
-        present_headings = master_items['Task Heading'].unique()
+    if 'Task Heading' in request_df.columns:
+        present_headings = request_df['Task Heading'].unique()
         sorted_headings = sorted(present_headings, key=lambda x: preferred_order.index(x) if x in preferred_order else 99)
         for heading in sorted_headings:
             if not heading or heading == "None": continue
@@ -463,12 +484,12 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
             pdf.ln(2)
             pdf.cell(0, 6, clean_text(heading.upper()), ln=1)
             pdf.set_font("Arial", size=9)
-            section_items = master_items[master_items['Task Heading'] == heading]
+            section_items = request_df[request_df['Task Heading'] == heading]
             for _, row in section_items.iterrows():
                 pdf.cell(5, 5, "-", ln=0)
                 pdf.multi_cell(0, 5, clean_text(str(row['Task Name'])))
     else:
-        for _, row in master_items.iterrows():
+        for _, row in request_df.iterrows():
             pdf.cell(5, 5, "-", ln=0)
             pdf.multi_cell(0, 5, clean_text(str(row['Task Name'])))
     pdf.ln(5)
@@ -570,8 +591,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -647,10 +670,11 @@ def main():
             s_muni = st.text_input("Municipal Department", value=settings_dict.get("Municipal", ""))
             s_comp = st.text_input("Compliance Department", value=settings_dict.get("Compliance", ""))
             s_debt = st.text_input("Debt Collection Department", value=settings_dict.get("Debt Collection", ""))
+            s_ins = st.text_input("Insurance Department", value=settings_dict.get("Insurance", ""))
             if st.form_submit_button("Save Global Settings"):
                 new_settings = {
                     "Wages": s_wages, "SARS": s_sars, "Municipal": s_muni,
-                    "Compliance": s_comp, "Debt Collection": s_debt
+                    "Compliance": s_comp, "Debt Collection": s_debt, "Insurance": s_ins
                 }
                 if save_global_settings(new_settings):
                     st.success("Global Settings Saved!")
@@ -701,6 +725,10 @@ def main():
             exp_code = s2.text_input("Expense Code")
             phys_address = st.text_area("Physical Address")
             date_req = st.date_input("Date Documentation Requested", datetime.today())
+            
+            st.write("### Operational")
+            has_arrears = st.checkbox("Are there Arrears / Legal Matters?")
+            
             submitted = st.form_submit_button("Create Complex")
             if submitted:
                 if complex_name:
@@ -715,7 +743,7 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
-                    result = create_new_building(data)
+                    result = create_new_building(data, has_arrears)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
                     elif result == "EXISTS":
@@ -843,6 +871,7 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
+            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -891,8 +920,10 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
+                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General", "Other"]
+                    # --- UPDATED HEADINGS ORDER ---
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
                     all_edited_dfs = []
                     for sec in sections:
@@ -911,6 +942,7 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                     
+                    # Uncategorized
                     unknown_df = agent_view[~agent_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -935,6 +967,7 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
+                    # Legacy Fallback
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -960,7 +993,7 @@ def main():
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
                 
                 if 'Task Heading' in full_view.columns:
-                    sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General", "Other"]
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     all_edited_dfs = []
                     
                     for sec in sections:
@@ -983,6 +1016,7 @@ def main():
                             )
                             all_edited_dfs.append(edited_sec)
                             
+                    # Uncategorized
                     unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
                     if not unknown_df.empty:
                         st.markdown(f"#### Uncategorized")
@@ -1011,6 +1045,7 @@ def main():
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
+                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
@@ -1055,8 +1090,9 @@ def main():
 
             st.divider()
             
-            # --- 4. REPORTS & COMMS (SARS) ---
+            # --- 4. REPORTS & COMMS (Including SARS) ---
             st.markdown("### 4. SARS Department Handover")
+            st.info("Notify the SARS department about the new complex registration.")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
@@ -1107,7 +1143,7 @@ def main():
 
             st.divider()
 
-            # --- 5. CITY COUNCIL ACCOUNTS (NEW) ---
+            # --- 5. CITY COUNCIL ---
             st.markdown("### 5. City Council Accounts")
             st.info("Add municipal accounts to be loaded onto the system.")
             
@@ -1346,16 +1382,98 @@ def main():
                         st.error("Debt Collection Email not set in Global Settings.")
             else:
                 st.caption("No arrears records loaded.")
+            
+            st.divider()
+            
+            # --- 8. INSURANCE HANDOVER ---
+            st.markdown("### 8. Insurance Handover")
+            
+            # Broker Details Form
+            with st.expander("Update Broker Details (If not in Service Providers)", expanded=True):
+                 # Check if we can find a broker in Service Providers first
+                broker_candidates = []
+                if not providers_df.empty:
+                    # Filter for typical broker keywords
+                    for _, row in providers_df.iterrows():
+                        svc = str(row['Service Type']).lower()
+                        if 'broker' in svc or 'insurance' in svc:
+                            broker_candidates.append(row)
+                
+                b_name_def = ""
+                b_email_def = ""
+                
+                if broker_candidates:
+                    st.info("Found potential broker(s) in Service Providers list.")
+                    # Just take the first one for convenience or let user type
+                    b_name_def = broker_candidates[0]['Provider Name']
+                    b_email_def = broker_candidates[0]['Email']
+
+                b_name = st.text_input("Current Broker Name", value=b_name_def)
+                b_email = st.text_input("Current Broker Email", value=b_email_def)
+            
+            c_ins1, c_ins2 = st.columns(2)
+            
+            # Button 1: External Broker Email
+            with c_ins1:
+                if st.button("Draft Broker Appointment Email"):
+                    if b_email:
+                        subj = f"Appointment of Managing Agents: {b_choice}"
+                        body = (f"Dear {b_name},\n\n"
+                                f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
+                                f"effective {take_on_date}.\n\n"
+                                f"We kindly request a copy of the latest insurance policy schedule and a 3-year claims history for our records.\n\n"
+                                f"Going forward, please direct all communication regarding this policy to the Portfolio Manager, "
+                                f"{assigned_manager} ({manager_email}), who is copied on this email.\n\n"
+                                f"Regards,\n{takeon_name}\nPretor Group")
+                        
+                        safe_subj = urllib.parse.quote(subj)
+                        safe_body = urllib.parse.quote(body)
+                        # CC Portfolio Manager
+                        cc_param = f"&cc={manager_email}" if manager_email else ""
+                        
+                        link = f'<a href="mailto:{b_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Broker Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                    else:
+                        st.error("Please enter a Broker Email address above.")
+
+            # Button 2: Internal Insurance Dept Email
+            with c_ins2:
+                if st.button("Draft Internal Insurance Email"):
+                    settings_df = get_data("Settings")
+                    ins_email = ""
+                    if not settings_df.empty:
+                        row = settings_df[settings_df['Department'] == 'Insurance']
+                        if not row.empty: ins_email = row.iloc[0]['Email']
+                    
+                    if ins_email:
+                        subj = f"Insurance Quote Request: {b_choice}"
+                        # Folder path construction
+                        folder_path = f"BCD folder -> {assigned_manager} -> {b_choice}"
+                        
+                        body = (f"Dear Insurance Department,\n\n"
+                                f"We have received the latest insurance policy and claims history for {b_choice}.\n\n"
+                                f"These documents have been saved on the server at:\n"
+                                f"📂 {folder_path}\n\n"
+                                f"Please could you review the current policy and provide us with a comparative quotation?\n\n"
+                                f"Regards,\n{takeon_name}")
+                        
+                        safe_subj = urllib.parse.quote(subj)
+                        safe_body = urllib.parse.quote(body)
+                        link = f'<a href="mailto:{ins_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Insurance Dept Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+                    else:
+                        st.error("Insurance Department Email not set in Global Settings.")
 
             st.divider()
             
             # --- 9. REPORTS ---
-            st.markdown("### 9. Client Reports")
+            st.markdown("### 9. Reports & Comms")
             col1, col2 = st.columns(2)
+            pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
+            completed_df = items_df[items_df['Received'] == True]
             with col1:
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
-                    # ... existing code ...
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n⚠️ OUTSTANDING:\n"
                     if pending_df.empty: body += "- None\n"
                     else:
@@ -1380,13 +1498,17 @@ def main():
                         body += "\n👥 EMPLOYEE TAKEOVER STATUS:\n"
                         for _, row in employees_df.iterrows():
                             e_name = f"{row['Name']} {row['Surname']}"
-                            # ... existing doc logic ...
                             docs = []
                             if str(row.get('Contract Received', '')).upper() == 'YES': docs.append("Contract ✅")
                             else: docs.append("Contract ❌")
-                            # ... etc ...
-                            doc_status = " ".join(docs) # simplified for brevity in this block
-                            body += f"- {e_name}: ...\n" # (keeping previous detailed logic in actual code block)
+                            if str(row.get('Payslip Received', '')).upper() == 'YES': docs.append("Payslip ✅")
+                            else: docs.append("Payslip ❌")
+                            if str(row.get('ID Copy Received', '')).upper() == 'YES': docs.append("ID ✅")
+                            else: docs.append("ID ❌")
+                            if str(row.get('Bank Confirmation', '')).upper() == 'YES': docs.append("Bank Conf ✅")
+                            else: docs.append("Bank Conf ❌")
+                            doc_status = ", ".join(docs)
+                            body += f"- {e_name}: {doc_status}\n"
 
                     body += f"\nRegards,\n{takeon_name}\nPretor Group"
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
@@ -1399,14 +1521,19 @@ def main():
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
-                    # ... existing finalize code ...
                     if pending_df.empty:
                         date = finalize_project_db(b_choice)
                         pdf = generate_report_pdf(b_choice, items_df, providers_df, "Final Report")
                         with open(pdf, "rb") as f:
                             st.download_button("Download Final PDF", f, file_name=pdf)
                         subj = f"Take-On Finalized: {b_choice}"
-                        body = (f"Dear Client,\n\n... (rest of body) ...")
+                        body = (f"Dear Client,\n\n"
+                                f"We are pleased to confirm that the take-on process for {b_choice} has been successfully finalized.\n\n"
+                                f"Take-On Effective Date: {take_on_date}\n"
+                                f"Initial Documentation Requested: {date_requested}\n"
+                                f"Date Finalized: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+                                f"We trust you find the attached final report in order.\n\n"
+                                f"Regards,\n{takeon_name}\nPretor Group")
                         safe_subj = urllib.parse.quote(subj)
                         safe_body = urllib.parse.quote(body)
                         cc_param = f"&cc={cc_string}" if cc_string else ""
