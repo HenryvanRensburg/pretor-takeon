@@ -229,19 +229,23 @@ def update_sars_status(complex_name, reset=False):
 def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        
+        # 1. Request End Date
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
         
+        # 2. Parse Year End Month
         months = {
             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
             'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
         }
-        ye_month = 2 
+        ye_month = 2 # Default Feb
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
         
+        # 3. Calculate Start of Current Period
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
         
@@ -256,10 +260,12 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
             
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
+        # 4. Calculate SINGLE Historic Block (5 Years)
         historic_end_date = current_fin_year_start - timedelta(days=1)
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
             
+        # 5. Bank Statements
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
@@ -330,12 +336,14 @@ def create_new_building(data_dict, has_arrears):
     # 1. Financial Items
     curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
+    # Format: [Name, Task, Rec, Date, Notes, Resp, Del, CompBy, Heading]
+    # Assign to "Financial" Heading
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
 
-    # 2. ARREARS ITEMS (Now assigned to Legal)
+    # 2. ARREARS ITEMS (Assign to "Legal")
     if has_arrears:
         arrears_tasks = [
             "Arrears: List of all debt already handed over to attorneys",
@@ -353,8 +361,8 @@ def create_new_building(data_dict, has_arrears):
         default_resp = str(item.get("Default Responsibility", "Previous Agent")).strip()
         if not default_resp: default_resp = "Previous Agent"
         
-        task_heading = str(item.get("Task Heading", "Take-On")).strip()
-        if not task_heading: task_heading = "Take-On"
+        task_heading = str(item.get("Task Heading", "General")).strip()
+        if not task_heading: task_heading = "General"
 
         should_copy = False
         if raw_cat == "BOTH" or raw_cat == "": should_copy = True
@@ -406,7 +414,6 @@ def update_project_agent_details(building_name, agent_name, agent_email):
 
 def save_checklist_batch(ws, building_name, edited_df_list):
     if not edited_df_list: return
-    
     final_edited_df = pd.concat(edited_df_list)
     
     all_rows = ws.get_all_values()
@@ -490,7 +497,8 @@ def add_logo_to_pdf(pdf):
     except:
         pass
 
-def generate_appointment_pdf(building_name, master_items, agent_name, take_on_date, year_end, building_code):
+# UPDATED PDF GENERATOR TO GROUP BY HEADINGS
+def generate_appointment_pdf(building_name, request_df, agent_name, take_on_date, year_end, building_code):
     pdf = FPDF()
     pdf.add_page()
     add_logo_to_pdf(pdf)
@@ -504,12 +512,40 @@ def generate_appointment_pdf(building_name, master_items, agent_name, take_on_da
              f"{building_name} available for collection by us.")
     pdf.multi_cell(0, 5, clean_text(intro))
     pdf.ln(5)
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "REQUIRED DOCUMENTATION:", ln=1)
     pdf.set_font("Arial", size=9)
-    for item in master_items:
-        pdf.cell(5, 5, "-", ln=0)
-        pdf.multi_cell(0, 5, clean_text(str(item)))
+    
+    # ORDERED HEADINGS
+    preferred_order = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Building Compliance", "Insurance", "City Council", "Employee", "General"]
+    
+    # Group by Task Heading
+    if 'Task Heading' in request_df.columns:
+        # Get unique headings present
+        present_headings = request_df['Task Heading'].unique()
+        # Sort them based on preferred order, putting unknowns at the end
+        sorted_headings = sorted(present_headings, key=lambda x: preferred_order.index(x) if x in preferred_order else 99)
+        
+        for heading in sorted_headings:
+            # Skip empty headings or "None"
+            if not heading or heading == "None": continue
+            
+            pdf.set_font("Arial", 'B', 9)
+            pdf.ln(2)
+            pdf.cell(0, 6, clean_text(heading.upper()), ln=1)
+            pdf.set_font("Arial", size=9)
+            
+            section_items = request_df[request_df['Task Heading'] == heading]
+            for _, row in section_items.iterrows():
+                pdf.cell(5, 5, "-", ln=0)
+                pdf.multi_cell(0, 5, clean_text(str(row['Task Name'])))
+    else:
+        # Fallback if no headings
+        for _, row in request_df.iterrows():
+            pdf.cell(5, 5, "-", ln=0)
+            pdf.multi_cell(0, 5, clean_text(str(row['Task Name'])))
+            
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "BANKING DETAILS FOR TRANSFER OF FUNDS:", ln=1)
@@ -667,7 +703,8 @@ def main():
             category = c2.selectbox("Category", ["Both", "BC", "HOA"])
             def_resp = c3.selectbox("Default Responsibility", ["Previous Agent", "Pretor Group", "Both"])
             # UPDATED HEADINGS
-            heading = c4.selectbox("Task Heading", ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General"])
+            new_headings = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General"]
+            heading = c4.selectbox("Task Heading", new_headings)
             
             if st.form_submit_button("Add Item"):
                 add_master_item(new_task, category, def_resp, heading)
@@ -905,9 +942,13 @@ def main():
                 if agent_email and agent_name:
                     update_project_agent_details(b_choice, agent_name, agent_email)
                     st.success("Agent details saved.")
+                    
+                    # Filter items by "Previous Agent" (Ignore Pretor Group)
                     request_df = items_df[items_df['Responsibility'] != 'Pretor Group']
-                    request_items = request_df['Task Name'].tolist()
-                    pdf_file = generate_appointment_pdf(b_choice, request_items, agent_name, take_on_date, year_end, building_code)
+                    
+                    # UPDATED: PDF GENERATOR CALL WITH DF
+                    pdf_file = generate_appointment_pdf(b_choice, request_df, agent_name, take_on_date, year_end, building_code)
+                    
                     with open(pdf_file, "rb") as f:
                         st.download_button("⬇️ Download Appointment Letter & Checklist", f, file_name=pdf_file)
                     subject = f"APPOINTMENT OF MANAGING AGENTS: {b_choice}"
@@ -935,8 +976,8 @@ def main():
                 
                 # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- NEW HEADINGS ---
-                    sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Legal", "Other"]
+                    # --- UPDATED HEADINGS ORDER ---
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
                     all_edited_dfs = []
                     for sec in sections:
@@ -1006,7 +1047,7 @@ def main():
                 if 'Completed By' not in full_view.columns: full_view['Completed By'] = ""
                 
                 if 'Task Heading' in full_view.columns:
-                    sections = ["Take-On", "Financial", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "Legal", "General", "Other"]
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     all_edited_dfs = []
                     
                     for sec in sections:
@@ -1023,9 +1064,7 @@ def main():
                                     "Delete": st.column_config.CheckboxColumn(),
                                     "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                                 },
-                                disabled=["Task Name", "Date Received"],
-                                hide_index=True,
-                                key=f"editor_full_{sec}"
+                                disabled=["Task Name", "Date Received"], hide_index=True, key=f"editor_full_{sec}"
                             )
                             all_edited_dfs.append(edited_sec)
                             
@@ -1043,9 +1082,7 @@ def main():
                                 "Delete": st.column_config.CheckboxColumn(),
                                 "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                             },
-                            disabled=["Task Name", "Date Received"],
-                            hide_index=True,
-                            key="editor_full_unknown"
+                            disabled=["Task Name", "Date Received"], hide_index=True, key="editor_full_unknown"
                         )
                         all_edited_dfs.append(edited_unk)
                         
@@ -1081,7 +1118,84 @@ def main():
                             st.rerun()
             
             st.divider()
-            st.markdown("### 3. Service Providers")
+            st.markdown("### 3. Agent Follow-up (Urgent)")
+            agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
+            if agent_pending_df.empty:
+                st.success("✅ No outstanding items marked for Previous Agent.")
+            else:
+                st.write(f"**{len(agent_pending_df)} items outstanding from Previous Agent.**")
+                if st.button("Draft Urgent Follow-up Email"):
+                    if saved_agent_email:
+                        body = f"Dear {saved_agent_name},\n\nRE: URGENT - OUTSTANDING INFORMATION: {b_choice}\n\n" \
+                               "Please note that the following items are still outstanding:\n\n"
+                        for _, row in agent_pending_df.iterrows():
+                            body += f"- {row['Task Name']}\n"
+                        body += f"\nYour urgent cooperation is appreciated.\n\nRegards,\n{takeon_name}\nPretor Group"
+                        subject = f"URGENT: Outstanding Handover Items - {b_choice}"
+                        safe_subject = urllib.parse.quote(subject)
+                        safe_body = urllib.parse.quote(body)
+                        cc_param = f"&cc={cc_string}" if cc_string else ""
+                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
+                        st.markdown(link, unsafe_allow_html=True)
+
+            st.divider()
+            
+            # --- 4. REPORTS & COMMS ---
+            st.markdown("### 4. Reports & Comms")
+            
+            st.markdown("#### 🏛️ SARS Department Handover")
+            
+            if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
+                st.success(f"✅ SARS email sent on {sars_sent_date}")
+                with st.expander("Need to resend?"):
+                    if st.button("Reset SARS Status"):
+                        update_sars_status(b_choice, reset=True)
+                        st.rerun()
+            else:
+                settings_df = get_data("Settings")
+                sars_email_setting = ""
+                if not settings_df.empty:
+                    row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
+                    if not row.empty: sars_email_setting = row.iloc[0]['Email']
+                
+                if sars_email_setting:
+                    final_sars_email = sars_email_setting
+                    st.caption(f"Sending to: {final_sars_email}")
+                else:
+                    st.warning("⚠️ SARS Department Email not set in Global Settings.")
+                    final_sars_email = st.text_input("Enter SARS Dept Email here:", placeholder="tax@pretor.co.za")
+
+                if final_sars_email:
+                    has_tax_num = tax_number and tax_number != "None" and tax_number != ""
+                    if has_tax_num:
+                        sars_status_text = f"Tax Number Available: {tax_number}"
+                        st.write(f"**Status:** {sars_status_text}")
+                    else:
+                        sars_status_text = st.radio("Select Tax Status:", 
+                            ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
+                            key="sars_radio_btn")
+                    
+                    if st.button("Draft SARS Email & Mark Sent"):
+                        if update_sars_status(b_choice):
+                            subj = f"New Complex Handover: {b_choice} - SARS Details"
+                            body = (f"Dear SARS Department,\n\n"
+                                    f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
+                                    f"Current Status: {sars_status_text}\n\n"
+                                    f"Please proceed with the necessary updates/registrations.\n\n"
+                                    f"Regards,\n{takeon_name}")
+                            
+                            safe_subj = urllib.parse.quote(subj)
+                            safe_body = urllib.parse.quote(body)
+                            link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                            st.success("Marked as sent! Click link above.")
+                else:
+                    st.info("Please enter an email address to proceed.")
+
+            st.divider()
+
+            # --- 5. SERVICE PROVIDERS ---
+            st.markdown("### 5. Service Providers")
             with st.expander("Add New Service Provider", expanded=False):
                 with st.form("add_provider"):
                     p_name = st.text_input("Provider Company Name")
@@ -1134,7 +1248,9 @@ def main():
                 st.caption("No providers loaded yet.")
             
             st.divider()
-            st.markdown("### 4. Employees & Payroll")
+
+            # --- 6. EMPLOYEES ---
+            st.markdown("### 6. Employees & Payroll")
             st.info(f"Global Payroll Info: UIF: {str(proj_row.get('UIF Number','Not set'))} | COIDA: {str(proj_row.get('COIDA Number','Not set'))} | SARS: {str(proj_row.get('SARS PAYE Number','Not set'))}")
             with st.expander("Add New Employee", expanded=False):
                 with st.form("add_employee"):
@@ -1215,16 +1331,15 @@ def main():
             else:
                 st.caption("No employees loaded.")
             
-            # --- STEP 5: ARREARS & LEGAL ---
+            # --- STEP 7: ARREARS & LEGAL ---
             st.divider()
-            st.markdown("### 5. Arrears & Legal")
+            st.markdown("### 7. Arrears & Legal")
             st.info("Add units with outstanding levies for handover to Debt Collection.")
             
             with st.expander("Add Arrears Item", expanded=False):
                 with st.form("add_arrears"):
                     a_unit = st.text_input("Unit Number")
                     a_amount = st.number_input("Outstanding Amount", min_value=0.0, step=0.01, format="%.2f")
-                    # NO CHECKBOX AS REQUESTED
                     a_attorney_name = st.text_input("Attorney Name")
                     a_attorney_email = st.text_input("Attorney Email")
                     a_attorney_phone = st.text_input("Attorney Phone")
@@ -1274,30 +1389,8 @@ def main():
                 st.caption("No arrears records loaded.")
 
             st.divider()
-            st.markdown("### 6. Agent Follow-up (Urgent)")
-            agent_pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False) & (items_df['Responsibility'].isin(['Previous Agent', 'Both']))]
-            if agent_pending_df.empty:
-                st.success("✅ No outstanding items marked for Previous Agent.")
-            else:
-                st.write(f"**{len(agent_pending_df)} items outstanding from Previous Agent.**")
-                if st.button("Draft Urgent Follow-up Email"):
-                    if saved_agent_email:
-                        body = f"Dear {saved_agent_name},\n\nRE: URGENT - OUTSTANDING INFORMATION: {b_choice}\n\n" \
-                               "Please note that the following items are still outstanding:\n\n"
-                        for _, row in agent_pending_df.iterrows():
-                            body += f"- {row['Task Name']}\n"
-                        body += f"\nYour urgent cooperation is appreciated.\n\nRegards,\n{takeon_name}\nPretor Group"
-                        subject = f"URGENT: Outstanding Handover Items - {b_choice}"
-                        safe_subject = urllib.parse.quote(subject)
-                        safe_body = urllib.parse.quote(body)
-                        cc_param = f"&cc={cc_string}" if cc_string else ""
-                        link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
             
-            st.divider()
-            
-            # --- 7. REPORTS & COMMS (SARS VISIBILITY FIX) ---
-            st.markdown("### 7. Reports & Comms")
+            # --- 8. CLIENT UPDATE ---
             col1, col2 = st.columns(2)
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
@@ -1346,63 +1439,7 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
-                
-                # --- NEW: SARS HANDOVER SECTION (VISIBLE) ---
-                st.markdown("#### 🏛️ SARS Department Handover")
-                st.info("Notify the SARS department about the new complex registration.")
-                
-                # Logic: Check sent date.
-                if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
-                    st.success(f"✅ SARS email sent on {sars_sent_date}")
-                    with st.expander("Need to resend?"):
-                        if st.button("Reset SARS Status"):
-                            update_sars_status(b_choice, reset=True)
-                            st.rerun()
-                else:
-                    # Get settings or fallback
-                    settings_df = get_data("Settings")
-                    sars_email_setting = ""
-                    if not settings_df.empty:
-                        # Case-insensitive lookup
-                        row = settings_df[settings_df['Department'].str.contains("SARS", case=False, na=False)]
-                        if not row.empty: sars_email_setting = row.iloc[0]['Email']
-                    
-                    if sars_email_setting:
-                        final_sars_email = sars_email_setting
-                        st.caption(f"Sending to: {final_sars_email}")
-                    else:
-                        st.warning("⚠️ SARS Department Email not set in Global Settings.")
-                        final_sars_email = st.text_input("Enter SARS Dept Email here:", placeholder="tax@pretor.co.za")
 
-                    # Only show button if we have an email
-                    if final_sars_email:
-                        has_tax_num = tax_number and tax_number != "None" and tax_number != ""
-                        if has_tax_num:
-                            sars_status_text = f"Tax Number Available: {tax_number}"
-                            st.write(f"**Status:** {sars_status_text}")
-                        else:
-                            sars_status_text = st.radio("Select Tax Status:", 
-                                ["Not Registered - Please Register", "Exempt - HOA/Body Corp", "Pending from Agent"], 
-                                key="sars_radio_btn")
-                        
-                        if st.button("Draft SARS Email & Mark Sent"):
-                            if update_sars_status(b_choice):
-                                subj = f"New Complex Handover: {b_choice} - SARS Details"
-                                body = (f"Dear SARS Department,\n\n"
-                                        f"Please find below the SARS details for the new complex: {b_choice}.\n\n"
-                                        f"Current Status: {sars_status_text}\n\n"
-                                        f"Please proceed with the necessary updates/registrations.\n\n"
-                                        f"Regards,\n{takeon_name}")
-                                
-                                safe_subj = urllib.parse.quote(subj)
-                                safe_body = urllib.parse.quote(body)
-                                link = f'<a href="mailto:{final_sars_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open SARS Email</a>'
-                                st.markdown(link, unsafe_allow_html=True)
-                                st.success("Marked as sent! Click link above.")
-                    else:
-                        st.info("Please enter an email address to proceed.")
-
-            st.markdown("---")
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
