@@ -225,10 +225,13 @@ def update_sars_status(complex_name, reset=False):
         st.error(f"Error updating SARS status: {e}")
         return False
 
-# --- CORRECTED DATE LOGIC (V4) ---
+# --- CORRECTED DATE LOGIC (V5) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     """
-    Calculates periods with full Start-End ranges for each historic year.
+    Calculates periods:
+    - Request End = Take On - 1 Day.
+    - Current Start = 1st of Month following Year End.
+    - Historic Block = 5 Years range ending 1 day before Current Start.
     """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
@@ -263,30 +266,23 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
             
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
         
-        # 4. Calculate Past 5 Years (RANGES)
-        past_years = []
-        # The first historic year ended 1 day before the Current Start Date.
-        pointer_end_date = current_fin_year_start - timedelta(days=1)
+        # 4. Calculate SINGLE Historic Block (5 Years)
+        # Historic End = 1 day before Current Start
+        historic_end_date = current_fin_year_start - timedelta(days=1)
+        # Historic Start = 5 years before Current Start
+        historic_start_date = current_fin_year_start - relativedelta(years=5)
         
-        for i in range(5):
-            # Calculate the start date of this historic year
-            # Start is (End Date + 1 day) - 1 year
-            fy_start = (pointer_end_date + timedelta(days=1)) - relativedelta(years=1)
-            
-            range_str = f"{fy_start.strftime('%d %B %Y')} to {pointer_end_date.strftime('%d %B %Y')}"
-            past_years.append(range_str)
-            
-            # Move pointer to the end of the previous year
-            pointer_end_date = fy_start - timedelta(days=1)
+        historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
             
         # 5. Bank Statements
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank statements from {bank_start.strftime('%d %B %Y')} to date."
         
-        return current_period_str, past_years, bank_str
+        return current_period_str, historic_period_str, bank_str
     except Exception as e:
-        return "Current Financial Year Records", ["Past 5 Financial Years"], "Latest Bank Statements"
+        return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
+# UPDATED: create_new_building uses single historic string
 def create_new_building(data_dict, has_arrears):
     sh = get_google_sheet()
     ws_projects = sh.worksheet("Projects")
@@ -347,15 +343,14 @@ def create_new_building(data_dict, has_arrears):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # 1. Financial Items
-    curr_fin, past_years, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    # 1. Financial Items (V5 Logic: Consolidated Historic)
+    curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
-    # Expanded Historic Items (Ranges)
-    for p_year_range in past_years:
-        new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {p_year_range}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
-        new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {p_year_range}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    # Single Block Items
+    new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
+    new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", ""])
     
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", ""])
 
@@ -1131,7 +1126,7 @@ def main():
             else:
                 st.caption("No employees loaded.")
             
-            # --- STEP 5: ARREARS & LEGAL (NEW!) ---
+            # --- STEP 5: ARREARS & LEGAL ---
             st.divider()
             st.markdown("### 5. Arrears & Legal")
             st.info("Add units with outstanding levies for handover to Debt Collection.")
@@ -1323,6 +1318,7 @@ def main():
                     else:
                         st.info("Please enter an email address to proceed.")
 
+            st.markdown("---")
             with col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
