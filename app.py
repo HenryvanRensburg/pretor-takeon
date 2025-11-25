@@ -9,6 +9,7 @@ import urllib.parse
 import re
 import os
 import calendar
+import time
 
 # --- CONFIGURATION ---
 SCOPES = [
@@ -16,20 +17,36 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# --- GOOGLE SHEETS CONNECTION ---
-def get_google_sheet():
-    try:
-        credentials_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
-        client = gspread.authorize(creds)
-        sheet = client.open("Pretor TakeOn DB")
-        return sheet
-    except Exception as e:
-        st.error(f"Connection Error. Please check Secrets. Details: {e}")
-        return None
+# --- GOOGLE SHEETS CONNECTION (ROBUST RETRY) ---
+def get_google_sheet(retries=5, delay=2):
+    """
+    Connects to Google Sheets with exponential backoff to handle 429 Rate Limit errors.
+    """
+    for i in range(retries):
+        try:
+            credentials_dict = st.secrets["gcp_service_account"]
+            creds = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+            client = gspread.authorize(creds)
+            sheet = client.open("Pretor TakeOn DB")
+            return sheet
+        except Exception as e:
+            # Check for Rate Limit Error (429)
+            error_str = str(e)
+            if "429" in error_str or "Quota exceeded" in error_str:
+                wait_time = delay * (i + 1)
+                # Only show warning on later retries to avoid UI clutter
+                if i > 1:
+                    st.toast(f"High traffic. Retrying connection in {wait_time}s...", icon="⏳")
+                time.sleep(wait_time)
+                continue
+            else:
+                st.error(f"Connection Error: {e}")
+                return None
+    st.error("Could not connect to Google Sheets after multiple attempts. Please wait a minute and reload.")
+    return None
 
 # --- DATA FUNCTIONS (WITH CACHING) ---
-@st.cache_data(ttl=10) 
+@st.cache_data(ttl=20) # Increased TTL to reduce API calls
 def get_data(worksheet_name):
     sh = get_google_sheet()
     if sh:
@@ -73,6 +90,14 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=cols)
                 except:
                     return pd.DataFrame()
+            if worksheet_name == "Trustees":
+                try:
+                    cols = ["Complex Name", "Name", "Surname", "Email", "Phone"]
+                    sh.add_worksheet("Trustees", 100, 5)
+                    sh.worksheet("Trustees").append_row(cols)
+                    return pd.DataFrame(columns=cols)
+                except:
+                    return pd.DataFrame()
             if worksheet_name == "Settings":
                 try:
                     sh.add_worksheet("Settings", 100, 2)
@@ -88,42 +113,49 @@ def clear_cache():
 
 def add_master_item(task_name, category, default_resp, task_heading):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Master")
     ws.append_row([task_name, category, default_resp, task_heading])
     clear_cache()
 
 def add_service_provider(complex_name, name, service, email, phone):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("ServiceProviders")
     ws.append_row([complex_name, name, service, email, phone, ""])
     clear_cache()
 
 def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Employees")
     ws.append_row([complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf])
     clear_cache()
 
 def add_arrears_item(complex_name, unit, amount, attorney_name, attorney_email, attorney_phone):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Arrears")
     ws.append_row([complex_name, unit, amount, attorney_name, attorney_email, attorney_phone])
     clear_cache()
 
 def add_council_account(complex_name, account_num, service, balance):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("CouncilAccounts")
     ws.append_row([complex_name, account_num, service, balance])
     clear_cache()
 
 def add_trustee(complex_name, name, surname, email, phone):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Trustees")
     ws.append_row([complex_name, name, surname, email, phone])
     clear_cache()
 
 def delete_employee(complex_name, name, surname):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Employees")
     try:
         rows = ws.get_all_values()
@@ -145,6 +177,7 @@ def delete_employee(complex_name, name, surname):
 
 def delete_arrears_item(complex_name, unit, amount):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Arrears")
     try:
         rows = ws.get_all_values()
@@ -166,6 +199,7 @@ def delete_arrears_item(complex_name, unit, amount):
 
 def delete_council_account(complex_name, account_num, service):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("CouncilAccounts")
     try:
         rows = ws.get_all_values()
@@ -187,6 +221,7 @@ def delete_council_account(complex_name, account_num, service):
 
 def delete_trustee(complex_name, name, surname):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Trustees")
     try:
         rows = ws.get_all_values()
@@ -208,6 +243,7 @@ def delete_trustee(complex_name, name, surname):
 
 def save_global_settings(settings_dict):
     sh = get_google_sheet()
+    if not sh: return False
     try:
         ws = sh.worksheet("Settings")
         ws.clear()
@@ -223,6 +259,7 @@ def save_global_settings(settings_dict):
 
 def update_service_provider_date(complex_name, provider_name):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("ServiceProviders")
     try:
         cell_list = ws.findall(complex_name)
@@ -243,6 +280,7 @@ def update_service_provider_date(complex_name, provider_name):
 
 def update_wages_status(complex_name, employee_count):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -264,6 +302,7 @@ def update_wages_status(complex_name, employee_count):
 
 def update_sars_status(complex_name, reset=False):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -289,6 +328,7 @@ def update_sars_status(complex_name, reset=False):
 
 def update_trustee_status(complex_name):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -338,6 +378,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
 # --- UPDATED: SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
+    if not sh: return "CONNECTION_ERROR"
     ws_projects = sh.worksheet("Projects")
     
     existing_names = ws_projects.col_values(1)
@@ -433,6 +474,7 @@ def create_new_building(data_dict):
 
 def update_building_details_batch(complex_name, updates):
     sh = get_google_sheet()
+    if not sh: return False
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(complex_name)
@@ -471,11 +513,21 @@ def update_building_details_batch(complex_name, updates):
 
 def update_project_agent_details(building_name, agent_name, agent_email):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(building_name)
-        ws.update_cell(cell.row, 24, agent_name)
-        ws.update_cell(cell.row, 25, agent_email)
+        headers = ws.row_values(1)
+        headers = [h.strip() for h in headers]
+        
+        if "Agent Name" in headers:
+            idx = headers.index("Agent Name") + 1
+            ws.update_cell(cell.row, idx, agent_name)
+            
+        if "Agent Email" in headers:
+            idx = headers.index("Agent Email") + 1
+            ws.update_cell(cell.row, idx, agent_email)
+            
         clear_cache()
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
@@ -495,7 +547,6 @@ def save_checklist_batch(ws, building_name, edited_df_list):
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
         
-        # Check if Delete column exists
         if 'Delete' in row and row['Delete']:
             rows_to_delete.append(row_idx)
             continue
@@ -527,12 +578,15 @@ def save_checklist_batch(ws, building_name, edited_df_list):
 
 def finalize_project_db(building_name):
     sh = get_google_sheet()
+    if not sh: return
     ws = sh.worksheet("Projects")
     cell = ws.find(building_name)
     final_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.update_cell(cell.row, 22, "TRUE")
-    ws.update_cell(cell.row, 23, final_date)
-    ws.update_cell(cell.row, 20, final_date)
+    headers = ws.row_values(1)
+    if "Is_Finalized" in headers:
+        ws.update_cell(cell.row, headers.index("Is_Finalized")+1, "TRUE")
+    if "Finalized Date" in headers:
+        ws.update_cell(cell.row, headers.index("Finalized Date")+1, final_date)
     clear_cache()
     return final_date
 
@@ -1021,42 +1075,52 @@ def main():
                 
                 # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- UPDATED HEADINGS ORDER ---
+                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
-                    # Add a custom sorter to the DF for better display in one table
-                    agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
-                    agent_view = agent_view.sort_values(by=['Heading_Order', 'Task Name'])
+                    all_edited_dfs = []
+                    for sec in sections:
+                        sec_df = agent_view[agent_view['Task Heading'] == sec]
+                        if not sec_df.empty:
+                            st.markdown(f"#### {sec}")
+                            cols_to_show = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
+                            edited_sec = st.data_editor(
+                                sec_df[cols_to_show],
+                                column_config={
+                                    "Received": st.column_config.CheckboxColumn(label="Received?"),
+                                    "Date Received": st.column_config.TextColumn(disabled=True),
+                                    "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
+                                },
+                                disabled=["Task Name", "Date Received"], hide_index=True, key=f"editor_agent_{sec}"
+                            )
+                            all_edited_dfs.append(edited_sec)
                     
-                    # Display ONE Unified Editor
-                    agent_cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
-                    
-                    edited_agent = st.data_editor(
-                        agent_view[agent_cols],
-                        column_config={
-                            "Task Heading": st.column_config.TextColumn(disabled=True),
-                            "Task Name": st.column_config.TextColumn(disabled=True),
-                            "Received": st.column_config.CheckboxColumn(label="Received?"),
-                            "Date Received": st.column_config.TextColumn(disabled=True),
-                            "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
-                        },
-                        disabled=["Task Heading", "Task Name", "Date Received"],
-                        hide_index=True,
-                        key="unified_agent_editor",
-                        height=600 # Taller height to see more
-                    )
+                    # Uncategorized
+                    unknown_df = agent_view[~agent_view['Task Heading'].isin(sections)]
+                    if not unknown_df.empty:
+                        st.markdown(f"#### Uncategorized")
+                        cols_to_show = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
+                        edited_unk = st.data_editor(
+                            unknown_df[cols_to_show],
+                            column_config={
+                                "Received": st.column_config.CheckboxColumn(label="Received?"),
+                                "Date Received": st.column_config.TextColumn(disabled=True),
+                                "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
+                            },
+                            disabled=["Task Name", "Date Received"], hide_index=True, key="editor_agent_unknown"
+                        )
+                        all_edited_dfs.append(edited_unk)
 
                     if st.button("Save Agent Updates"):
                         sh = get_google_sheet()
                         if sh:
                             ws = sh.worksheet("Checklist")
                             with st.spinner("Saving..."):
-                                save_checklist_batch(ws, b_choice, [edited_agent])
+                                save_checklist_batch(ws, b_choice, all_edited_dfs)
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
                     # Legacy Fallback
-                    st.warning("Legacy Data - No Headings Found")
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1083,36 +1147,54 @@ def main():
                 
                 if 'Task Heading' in full_view.columns:
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
+                    all_edited_dfs = []
                     
-                    full_view['Heading_Order'] = full_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
-                    full_view = full_view.sort_values(by=['Heading_Order', 'Task Name'])
-                    
-                    # UNIFIED INTERNAL EDITOR
-                    # Removed "Responsibility" column from display list
-                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
-                    
-                    edited_full = st.data_editor(
-                        full_view[cols_to_show],
-                        column_config={
-                            "Task Heading": st.column_config.TextColumn(disabled=True),
-                            "Task Name": st.column_config.TextColumn(disabled=True),
-                            "Received": st.column_config.CheckboxColumn(label="Completed?"),
-                            "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            "Delete": st.column_config.CheckboxColumn(),
-                            "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
-                        },
-                        disabled=["Task Heading", "Task Name", "Date Received"],
-                        hide_index=True,
-                        key="unified_full_editor",
-                        height=600
-                    )
+                    for sec in sections:
+                        sec_df = full_view[full_view['Task Heading'] == sec]
+                        if not sec_df.empty:
+                            st.markdown(f"#### {sec}")
+                            cols_to_show = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                            edited_sec = st.data_editor(
+                                sec_df[cols_to_show],
+                                column_config={
+                                    "Received": st.column_config.CheckboxColumn(label="Completed?"),
+                                    "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                                    "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
+                                    "Delete": st.column_config.CheckboxColumn(),
+                                    "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
+                                },
+                                disabled=["Task Name", "Date Received"],
+                                hide_index=True,
+                                key=f"editor_full_{sec}"
+                            )
+                            all_edited_dfs.append(edited_sec)
+                            
+                    # Uncategorized
+                    unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
+                    if not unknown_df.empty:
+                        st.markdown(f"#### Uncategorized")
+                        cols_to_show = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                        edited_unk = st.data_editor(
+                            unknown_df[cols_to_show],
+                            column_config={
+                                "Received": st.column_config.CheckboxColumn(label="Completed?"),
+                                "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                                "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
+                                "Delete": st.column_config.CheckboxColumn(),
+                                "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
+                            },
+                            disabled=["Task Name", "Date Received"],
+                            hide_index=True,
+                            key="editor_full_unknown"
+                        )
+                        all_edited_dfs.append(edited_unk)
                         
                     if st.button("Save Internal Tracker"):
                         sh = get_google_sheet()
                         if sh:
                             ws = sh.worksheet("Checklist")
                             with st.spinner("Saving..."):
-                                save_checklist_batch(ws, b_choice, [edited_full])
+                                save_checklist_batch(ws, b_choice, all_edited_dfs)
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
@@ -1162,9 +1244,8 @@ def main():
             st.divider()
             
             # --- 4. REPORTS & COMMS (Including SARS) ---
-            st.markdown("### 4. Reports & Comms")
-            
-            st.markdown("#### 🏛️ SARS Department Handover")
+            st.markdown("### 4. SARS Department Handover")
+            st.info("Notify the SARS department about the new complex registration.")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
