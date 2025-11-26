@@ -851,9 +851,6 @@ def main():
                 c_items = checklist[checklist['Complex Name'] == c_name]
                 valid_items = c_items[c_items['Delete'] != 'TRUE']
                 
-                # CHANGED LOGIC HERE
-                # Exclude "Previous Agent" items from total count
-                # We only want to track items assigned to Pretor (or Both, since that involves Pretor)
                 pretor_items = valid_items[valid_items['Responsibility'].isin(['Pretor Group', 'Both'])]
                 
                 total = len(pretor_items)
@@ -1798,59 +1795,59 @@ def main():
                         else:
                             st.error("Insurance Department Email not set in Global Settings.")
 
-            # --- NEW: MANAGEMENT FEE CONFIRMATION ---
-            st.markdown("---")
-            st.markdown("#### 💰 Management Fee Confirmation")
-            
-            rep_col1, rep_col2 = st.columns(2) 
-            
-            if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
-                st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
-                with st.expander("Need to resend?"):
-                    if st.button("Reset Fee Status"):
-                        update_fee_status(b_choice, reset=True)
-                        st.rerun()
-            else:
-                settings_df = get_data("Settings")
-                acc_email = ""
-                if not settings_df.empty:
-                    # Look for 'Accounts' or 'Finance'
-                    row = settings_df[settings_df['Department'].str.contains("Accounts", case=False, na=False)]
-                    if not row.empty: acc_email = row.iloc[0]['Email']
-                
-                if acc_email:
-                    st.info(f"Sending to: {acc_email} (Accounts Dept)")
-                    if st.button("Draft Fee Confirmation Email"):
-                         if update_fee_status(b_choice):
-                            subj = f"Management Fee Confirmation: {b_choice}"
-                            body = (f"Dear Accounts Department,\n\n"
-                                    f"Please confirm the loading of management fees for the new take-on: {b_choice}.\n\n"
-                                    f"Management Fee: R{mgmt_fees} (Excl VAT)\n"
-                                    f"Effective Date: {take_on_date}\n\n"
-                                    f"Please confirm once loaded.\n\n"
-                                    f"Regards,\n{takeon_name}")
-                            
-                            safe_subj = urllib.parse.quote(subj)
-                            safe_body = urllib.parse.quote(body)
-                            link = f'<a href="mailto:{acc_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Fee Email</a>'
-                            st.markdown(link, unsafe_allow_html=True)
-                            st.success("Status updated! Click link above.")
-                else:
-                    st.error("Accounts Department Email not set in Global Settings.")
-
             # --- 11. REPORTS ---
             st.markdown("### 11. Reports & Comms")
             
-            # FIX: Define DataFrames explicitly before using in reports section
+            # --- NEW: MANAGEMENT FEE CONFIRMATION ---
+            st.markdown("#### 💰 Management Fee Confirmation")
+            
+            # Use ONE set of columns for this section to avoid misalignment
+            rep_col1, rep_col2 = st.columns(2) 
+
+            with rep_col1:
+                if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
+                    st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
+                    with st.expander("Need to resend?"):
+                        if st.button("Reset Fee Status"):
+                            update_fee_status(b_choice, reset=True)
+                            st.rerun()
+                else:
+                    settings_df = get_data("Settings")
+                    acc_email = ""
+                    if not settings_df.empty:
+                        row = settings_df[settings_df['Department'].str.contains("Accounts", case=False, na=False)]
+                        if not row.empty: acc_email = row.iloc[0]['Email']
+                    
+                    if acc_email:
+                        st.info(f"Sending to: {acc_email} (Accounts Dept)")
+                        if st.button("Draft Fee Confirmation Email"):
+                             if update_fee_status(b_choice):
+                                subj = f"Management Fee Confirmation: {b_choice}"
+                                body = (f"Dear Accounts Department,\n\n"
+                                        f"Please confirm the loading of management fees for the new take-on: {b_choice}.\n\n"
+                                        f"Management Fee: R{mgmt_fees} (Excl VAT)\n"
+                                        f"Effective Date: {take_on_date}\n\n"
+                                        f"Please confirm once loaded.\n\n"
+                                        f"Regards,\n{takeon_name}")
+                                
+                                safe_subj = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{acc_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Fee Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status updated! Click link above.")
+                    else:
+                        st.error("Accounts Department Email not set in Global Settings.")
+            
+            # --- Report Section Variables ---
             pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
             completed_df = items_df[items_df['Received'] == True]
             
             with rep_col1:
-                st.subheader("Client Update")
+                st.markdown("#### Client Update")
                 if st.button("Draft Client Email"):
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n"
                     
-                    # --- NEW: DETAILED STATUS SECTION ---
+                    # --- DETAILED STATUS SECTION ---
                     body += "📋 ITEMS ATTENDED TO / IN PROGRESS:\n"
                     
                     # Insurance Status
@@ -1908,7 +1905,7 @@ def main():
                     st.markdown(link, unsafe_allow_html=True)
 
             with rep_col2:
-                st.subheader("Finalize")
+                st.markdown("#### Finalize")
                 if st.button("Finalize Project"):
                     if pending_df.empty:
                         date = finalize_project_db(b_choice)
