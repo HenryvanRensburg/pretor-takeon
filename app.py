@@ -53,8 +53,8 @@ def get_data(worksheet_name):
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
                 if worksheet_name == "Projects":
-                    # Added "Debt Collection Email Sent Date" to columns
-                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date", "Debt Collection Email Sent Date"])
+                    # Added Council Email Sent Date
+                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date", "Debt Collection Email Sent Date", "Council Email Sent Date"])
                 if worksheet_name == "ServiceProviders":
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
                 if worksheet_name == "Employees":
@@ -320,10 +320,6 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
-    """
-    Updates insurance email status.
-    email_type: 'Broker' or 'Internal'
-    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -352,9 +348,7 @@ def update_insurance_status(complex_name, email_type, reset=False):
         st.error(f"Error updating Insurance status: {e}")
         return False
 
-# --- NEW: LEGAL STATUS UPDATER ---
 def update_legal_status(complex_name, reset=False):
-    """Updates the Debt Collection Email Sent Date."""
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -379,6 +373,35 @@ def update_legal_status(complex_name, reset=False):
         return True
     except Exception as e:
         st.error(f"Error updating Legal status: {e}")
+        return False
+
+# --- NEW: COUNCIL EMAIL STATUS UPDATER ---
+def update_council_status(complex_name, reset=False):
+    """Updates the Council Email Sent Date."""
+    sh = get_google_sheet()
+    if not sh: return False
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        
+        if "Council Email Sent Date" not in headers:
+             st.error("Please add 'Council Email Sent Date' header to Projects tab.")
+             return False
+        
+        col_idx = headers.index("Council Email Sent Date") + 1
+        
+        if reset:
+            ws.update_cell(row_num, col_idx, "")
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            ws.update_cell(row_num, col_idx, today)
+            
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating Council status: {e}")
         return False
 
 def save_broker_details_to_project(complex_name, name, email):
@@ -490,7 +513,8 @@ def create_new_building(data_dict):
         "Insurance Broker Email": ["Insurance Broker Email"],
         "Broker Email Sent Date": ["Broker Email Sent Date"],
         "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"],
-        "Debt Collection Email Sent Date": ["Debt Collection Email Sent Date"]
+        "Debt Collection Email Sent Date": ["Debt Collection Email Sent Date"],
+        "Council Email Sent Date": ["Council Email Sent Date"]
     }
 
     for i, header in enumerate(headers):
@@ -548,7 +572,9 @@ def update_building_details_batch(complex_name, updates):
         row_num = cell.row
         headers = ws.row_values(1) 
         headers = [h.strip() for h in headers]
+        
         cells_to_update = []
+        
         for col_name, new_value in updates.items():
             if col_name in headers:
                 col_index = headers.index(col_name) + 1
@@ -567,6 +593,7 @@ def update_building_details_batch(complex_name, updates):
                                 col_index = headers.index(alt) + 1
                                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
                                 break
+        
         if cells_to_update:
             ws.update_cells(cells_to_update)
             clear_cache()
@@ -804,8 +831,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -951,7 +980,6 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
-                    # Removed the second argument (has_arrears) as it was deleted in previous step
                     result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
@@ -996,6 +1024,7 @@ def main():
             broker_name_saved = str(proj_row.get('Insurance Broker Name', ''))
             broker_email_saved = str(proj_row.get('Insurance Broker Email', ''))
             legal_sent_date = str(proj_row.get('Debt Collection Email Sent Date', ''))
+            council_sent_date = str(proj_row.get('Council Email Sent Date', ''))
 
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
@@ -1383,26 +1412,34 @@ def main():
             if not council_df.empty:
                 st.dataframe(council_df[["Account Number", "Service Covered", "Current Balance"]], hide_index=True)
                 
-                if st.button("Draft Council Dept Email"):
-                    settings_df = get_data("Settings")
-                    muni_email = ""
-                    if not settings_df.empty:
-                        row = settings_df[settings_df['Department'] == 'Municipal']
-                        if not row.empty: muni_email = row.iloc[0]['Email']
-                    
-                    if muni_email:
-                        subject = f"New Council Accounts: {b_choice}"
-                        body = (f"Dear Municipal Department,\n\n"
-                                f"Please load the following council accounts for {b_choice} onto the system and council portal:\n\n")
-                        for _, row in council_df.iterrows():
-                            body += f"- Acc: {row['Account Number']} ({row['Service Covered']}) - Bal: R{row['Current Balance']}\n"
-                        body += f"\nRegards,\n{takeon_name}\nPretor Group"
-                        safe_subj = urllib.parse.quote(subject)
-                        safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{muni_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Council Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
-                    else:
-                        st.error("Municipal Email not set in Global Settings.")
+                if council_sent_date and council_sent_date != "None" and council_sent_date != "":
+                    st.success(f"✅ Council email sent on {council_sent_date}")
+                    if st.button("Reset Council Status"):
+                         update_council_status(b_choice, reset=True)
+                         st.rerun()
+                else:
+                    if st.button("Draft Council Dept Email"):
+                        settings_df = get_data("Settings")
+                        muni_email = ""
+                        if not settings_df.empty:
+                            row = settings_df[settings_df['Department'] == 'Municipal']
+                            if not row.empty: muni_email = row.iloc[0]['Email']
+                        
+                        if muni_email:
+                            if update_council_status(b_choice):
+                                subject = f"New Council Accounts: {b_choice}"
+                                body = (f"Dear Municipal Department,\n\n"
+                                        f"Please load the following council accounts for {b_choice} onto the system and council portal:\n\n")
+                                for _, row in council_df.iterrows():
+                                    body += f"- Acc: {row['Account Number']} ({row['Service Covered']}) - Bal: R{row['Current Balance']}\n"
+                                body += f"\nRegards,\n{takeon_name}\nPretor Group"
+                                safe_subj = urllib.parse.quote(subject)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{muni_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Council Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status updated! Click link above.")
+                        else:
+                            st.error("Municipal Email not set in Global Settings.")
             else:
                 st.caption("No council accounts loaded.")
 
