@@ -72,7 +72,7 @@ def get_data(worksheet_name):
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
 
-            # --- SCHEMA REPAIR ---
+            # --- SCHEMA REPAIR: Ensure new columns exist if sheet is old ---
             if worksheet_name == "ServiceProviders":
                 if "Date Emailed" not in df.columns:
                     df["Date Emailed"] = ""
@@ -549,13 +549,6 @@ def create_new_building(data_dict):
     new_rows.append([data_dict["Complex Name"], owner_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], closing_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     
-    # --- INSERT NEW ITEMS HERE: BANK & CLOSING BALANCES ---
-    day_before_date = (datetime.strptime(str(data_dict["Take On Date"]), "%Y-%m-%d") - timedelta(days=1)).strftime('%d %B %Y')
-    
-    new_rows.append([data_dict["Complex Name"], f"Final reconciliation of previous bank account and proof of transfer of funds to be provided on {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    new_rows.append([data_dict["Complex Name"], f"A final trial balance as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    new_rows.append([data_dict["Complex Name"], f"The latest cashflow statement as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -1232,7 +1225,7 @@ def main():
                     full_view['Heading_Order'] = full_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     full_view = full_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
+                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[cols_to_show],
                         column_config={
@@ -1240,6 +1233,7 @@ def main():
                             "Task Name": st.column_config.TextColumn(disabled=True),
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
