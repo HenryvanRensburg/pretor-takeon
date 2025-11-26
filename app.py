@@ -40,7 +40,7 @@ def get_google_sheet(retries=5, delay=2):
     st.error("Could not connect to Google Sheets after multiple attempts. Please wait a minute and reload.")
     return None
 
-# --- DATA FUNCTIONS (WITH SCHEMA REPAIR) ---
+# --- DATA FUNCTIONS (WITH CACHING & RETRY) ---
 @st.cache_data(ttl=20) 
 def get_data(worksheet_name):
     sh = get_google_sheet()
@@ -49,7 +49,7 @@ def get_data(worksheet_name):
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
             
-            # Handle empty sheets
+            # Handle empty sheets or missing sheets
             if not data:
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
@@ -69,7 +69,6 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=["Department", "Email"])
                 return pd.DataFrame()
 
-            # Load existing data
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
@@ -79,24 +78,9 @@ def get_data(worksheet_name):
                 if "Date Emailed" not in df.columns:
                     df["Date Emailed"] = ""
 
-            if worksheet_name == "Projects":
-                required_cols = [
-                    "Debt Collection Email Sent Date", 
-                    "Council Email Sent Date", 
-                    "Fee Confirmation Email Sent Date",
-                    "Insurance Broker Name",
-                    "Insurance Broker Email",
-                    "Broker Email Sent Date",
-                    "Internal Ins Email Sent Date",
-                    "Trustee Email Sent Date"
-                ]
-                for col in required_cols:
-                    if col not in df.columns:
-                        df[col] = ""
-
             return df
-
         except gspread.exceptions.WorksheetNotFound:
+            # Return empty DFs for missing sheets to allow app to run and create data later
             if worksheet_name == "Trustees":
                  return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "Email", "Phone"])
             return pd.DataFrame()
@@ -267,9 +251,6 @@ def update_service_provider_date(complex_name, provider_name):
         
         if target_row:
             today = datetime.now().strftime("%Y-%m-%d")
-            # Check column index for "Date Emailed", it is usually col 6
-            # But safer to check headers if possible, though findall doesn't give headers easily.
-            # Assuming standard structure.
             ws.update_cell(target_row, 6, today) 
             clear_cache()
             return True
@@ -346,6 +327,10 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
+    """
+    Updates insurance email status.
+    email_type: 'Broker' or 'Internal'
+    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -842,8 +827,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1127,7 +1114,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1182,11 +1168,8 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
-                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
-                    
                     agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     agent_view = agent_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
@@ -1215,7 +1198,7 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
-                    # Legacy Fallback
+                    st.warning("Legacy Data - No Headings Found")
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1245,7 +1228,7 @@ def main():
                     full_view['Heading_Order'] = full_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     full_view = full_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[cols_to_show],
                         column_config={
@@ -1253,7 +1236,6 @@ def main():
                             "Task Name": st.column_config.TextColumn(disabled=True),
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
