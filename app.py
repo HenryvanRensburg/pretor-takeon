@@ -49,6 +49,7 @@ def get_data(worksheet_name):
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
             
+            # Handle empty sheets
             if not data:
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
@@ -68,6 +69,7 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=["Department", "Email"])
                 return pd.DataFrame()
 
+            # Load existing data
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
@@ -250,6 +252,7 @@ def update_service_provider_date(complex_name, provider_name):
         
         if target_row:
             today = datetime.now().strftime("%Y-%m-%d")
+            # Ensure column exists before update - assuming column F (6)
             ws.update_cell(target_row, 6, today) 
             clear_cache()
             return True
@@ -326,6 +329,10 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
+    """
+    Updates insurance email status.
+    email_type: 'Broker' or 'Internal'
+    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -549,6 +556,12 @@ def create_new_building(data_dict):
     new_rows.append([data_dict["Complex Name"], owner_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], closing_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     
+    # Insert the specific DAY BEFORE bank items
+    day_before_date = (datetime.strptime(str(data_dict["Take On Date"]), "%Y-%m-%d") - timedelta(days=1)).strftime('%d %B %Y')
+    new_rows.append([data_dict["Complex Name"], f"Final reconciliation of previous bank account and proof of transfer of funds to be provided on {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+    new_rows.append([data_dict["Complex Name"], f"A final trial balance as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+    new_rows.append([data_dict["Complex Name"], f"The latest cashflow statement as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -822,8 +835,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1097,6 +1112,9 @@ def main():
             
             all_providers = get_data("ServiceProviders")
             if not all_providers.empty:
+                # --- SAFE SCHEMA CHECK HERE ---
+                if 'Date Emailed' not in all_providers.columns:
+                    all_providers['Date Emailed'] = ""
                 providers_df = all_providers[all_providers['Complex Name'] == b_choice].copy()
             else:
                 providers_df = pd.DataFrame()
@@ -1164,7 +1182,7 @@ def main():
                 
                 # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- NEW HEADINGS ---
+                    # --- UPDATED HEADINGS ORDER ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
                     agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
@@ -1233,7 +1251,6 @@ def main():
                             "Task Name": st.column_config.TextColumn(disabled=True),
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
@@ -1780,7 +1797,7 @@ def main():
             st.markdown("---")
             st.markdown("#### 💰 Management Fee Confirmation")
             
-            rep_col1, rep_col2 = st.columns(2) # Define columns here for Reports
+            rep_col1, rep_col2 = st.columns(2) 
             
             if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
                 st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
