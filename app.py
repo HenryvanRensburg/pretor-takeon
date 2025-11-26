@@ -319,6 +319,10 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
+    """
+    Updates insurance email status.
+    email_type: 'Broker' or 'Internal'
+    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -456,32 +460,62 @@ def save_broker_details_to_project(complex_name, name, email):
 
 # --- DATE LOGIC (V6) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
+    """
+    Calculates periods:
+    - Request End = Take On - 1 Day.
+    - Current Start = 1st of Month following Year End.
+    - Historic Block = 5 Years range ending 1 day before Current Start.
+    - Closing Balance Deadline = 10 days after Take On.
+    """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
+        
+        # 1. Request End Date
         first_of_take_on = take_on_date.replace(day=1)
         request_end_date = first_of_take_on - timedelta(days=1) 
-        months = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
-        ye_month = 2 
+        
+        # 2. Parse Year End Month
+        months = {
+            'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+            'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+        }
+        ye_month = 2 # Default Feb
         for m_name, m_val in months.items():
             if m_name in str(year_end_str).lower():
                 ye_month = m_val
                 break
+        
+        # 3. Calculate Start of Current Period
         start_month = ye_month + 1
         if start_month > 12: start_month = 1
+        
         candidate_year = request_end_date.year
-        if start_month > request_end_date.month: candidate_year -= 1
+        if start_month > request_end_date.month:
+             candidate_year -= 1
+        
         current_fin_year_start = datetime(candidate_year, start_month, 1)
+        
         if current_fin_year_start > request_end_date:
             current_fin_year_start -= relativedelta(years=1)
+            
         current_period_str = f"Financial records from {current_fin_year_start.strftime('%d %B %Y')} to {request_end_date.strftime('%d %B %Y')}"
+        
+        # 4. Calculate SINGLE Historic Block (5 Years)
         historic_end_date = current_fin_year_start - timedelta(days=1)
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
+            
+        # 5. Bank Statements
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank account statements as of {bank_start.strftime('%d %B %Y')} as well as confirmation that the funds has been paid over to Pretor Group."
+        
+        # 6. Owner Balances (1 Day Prior)
         owner_bal_str = f"Owner balances to be provided on {request_end_date.strftime('%d %B %Y')}."
+
+        # 7. Final Closing Balances (10 Days After)
         closing_date = take_on_date + timedelta(days=10)
         closing_bal_str = f"Final bank closing balances to be provided by {closing_date.strftime('%d %B %Y')} as well as confirmation that the funds has been paid over to Pretor Group."
+
         return current_period_str, historic_period_str, bank_str, owner_bal_str, closing_bal_str
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements", "Owner Balances", "Final Closing Balances"
@@ -491,32 +525,59 @@ def create_new_building(data_dict):
     sh = get_google_sheet()
     if not sh: return "CONNECTION_ERROR"
     ws_projects = sh.worksheet("Projects")
+    
     existing_names = ws_projects.col_values(1)
     if data_dict["Complex Name"] in existing_names:
         return "EXISTS"
+
     headers_raw = ws_projects.row_values(1)
     headers = [h.strip() for h in headers_raw]
     row_data = [""] * len(headers)
+    
     field_mappings = {
-        "Complex Name": ["Complex Name"], "Type": ["Type"], "Previous Agents": ["Previous Agents"],
-        "Take On Date": ["Take On Date"], "No of Units": ["No of Units"], "Mgmt Fees": ["Mgmt Fees"],
-        "Erf No": ["Erf No"], "SS Number": ["SS Number"], "CSOS Number": ["CSOS Number"],
-        "VAT Number": ["VAT Number"], "Tax Number": ["Tax Number"], "Year End": ["Year End", "Financial Year End"],
-        "Auditor": ["Auditor"], "Last Audit Year": ["Last Audit Year"], "Building Code": ["Building Code"],
-        "Expense Code": ["Expense Code"], "Physical Address": ["Physical Address", "Address"],
+        "Complex Name": ["Complex Name"],
+        "Type": ["Type"],
+        "Previous Agents": ["Previous Agents"],
+        "Take On Date": ["Take On Date"],
+        "No of Units": ["No of Units"],
+        "Mgmt Fees": ["Mgmt Fees"],
+        "Erf No": ["Erf No"],
+        "SS Number": ["SS Number"],
+        "CSOS Number": ["CSOS Number"],
+        "VAT Number": ["VAT Number"],
+        "Tax Number": ["Tax Number"],
+        "Year End": ["Year End", "Financial Year End"],
+        "Auditor": ["Auditor"],
+        "Last Audit Year": ["Last Audit Year"],
+        "Building Code": ["Building Code"],
+        "Expense Code": ["Expense Code"],
+        "Physical Address": ["Physical Address", "Address"],
         "Assigned Manager": ["Assigned Manager", "Portfolio Manager", "Portfolio Manager Name"],
-        "Date Doc Requested": ["Date Doc Requested"], "Client Email": ["Client Email"],
-        "Manager Email": ["Manager Email", "Portfolio Manager Email"], "Assistant Name": ["Assistant Name"],
-        "Assistant Email": ["Assistant Email"], "Bookkeeper Name": ["Bookkeeper Name"],
-        "Bookkeeper Email": ["Bookkeeper Email"], "UIF Number": ["UIF Number"], "COIDA Number": ["COIDA Number"],
-        "SARS PAYE Number": ["SARS PAYE Number"], "TakeOn Name": ["TakeOn Name"], "TakeOn Email": ["TakeOn Email"],
-        "Wages Sent Date": ["Wages Sent Date"], "Wages Employee Count": ["Wages Employee Count"],
-        "SARS Sent Date": ["SARS Sent Date"], "Trustee Email Sent Date": ["Trustee Email Sent Date"],
-        "Insurance Broker Name": ["Insurance Broker Name"], "Insurance Broker Email": ["Insurance Broker Email"],
-        "Broker Email Sent Date": ["Broker Email Sent Date"], "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"],
-        "Debt Collection Email Sent Date": ["Debt Collection Email Sent Date"], "Council Email Sent Date": ["Council Email Sent Date"],
+        "Date Doc Requested": ["Date Doc Requested"],
+        "Client Email": ["Client Email"],
+        "Manager Email": ["Manager Email", "Portfolio Manager Email"],
+        "Assistant Name": ["Assistant Name"],
+        "Assistant Email": ["Assistant Email"],
+        "Bookkeeper Name": ["Bookkeeper Name"],
+        "Bookkeeper Email": ["Bookkeeper Email"],
+        "UIF Number": ["UIF Number"],
+        "COIDA Number": ["COIDA Number"],
+        "SARS PAYE Number": ["SARS PAYE Number"],
+        "TakeOn Name": ["TakeOn Name"],
+        "TakeOn Email": ["TakeOn Email"],
+        "Wages Sent Date": ["Wages Sent Date"],
+        "Wages Employee Count": ["Wages Employee Count"],
+        "SARS Sent Date": ["SARS Sent Date"],
+        "Trustee Email Sent Date": ["Trustee Email Sent Date"],
+        "Insurance Broker Name": ["Insurance Broker Name"],
+        "Insurance Broker Email": ["Insurance Broker Email"],
+        "Broker Email Sent Date": ["Broker Email Sent Date"],
+        "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"],
+        "Debt Collection Email Sent Date": ["Debt Collection Email Sent Date"],
+        "Council Email Sent Date": ["Council Email Sent Date"],
         "Fee Confirmation Email Sent Date": ["Fee Confirmation Email Sent Date"]
     }
+
     for i, header in enumerate(headers):
         for key, possible_names in field_mappings.items():
             if header in possible_names:
@@ -525,16 +586,22 @@ def create_new_building(data_dict):
                     val = str(val)
                 row_data[i] = val
                 break
+    
     ws_projects.append_row(row_data)
+    
     ws_master = sh.worksheet("Master")
     raw_master = ws_master.get_all_values()
     if not raw_master: return False
     headers = raw_master.pop(0)
     master_data = [dict(zip(headers, row)) for row in raw_master]
+    
     b_type = data_dict["Type"] 
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
+    
+    # Unpack ALL 5 return values
     curr_fin, historic_block, bank_req, owner_bal_req, closing_bal_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
@@ -555,6 +622,7 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
         if should_copy and task:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", default_resp, "FALSE", "", task_heading])
+    
     if new_rows:
         ws_checklist.append_rows(new_rows)
     clear_cache() 
@@ -575,7 +643,12 @@ def update_building_details_batch(complex_name, updates):
                 col_index = headers.index(col_name) + 1
                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
             else:
-                alt_map = {"Assigned Manager": ["Portfolio Manager", "Portfolio Manager Name"], "Manager Email": ["Portfolio Manager Email"], "Physical Address": ["Address"], "Year End": ["Financial Year End"]}
+                alt_map = {
+                    "Assigned Manager": ["Portfolio Manager", "Portfolio Manager Name"],
+                    "Manager Email": ["Portfolio Manager Email"],
+                    "Physical Address": ["Address"],
+                    "Year End": ["Financial Year End"]
+                }
                 for key, alts in alt_map.items():
                     if col_name == key:
                         for alt in alts:
@@ -599,12 +672,15 @@ def update_project_agent_details(building_name, agent_name, agent_email):
         cell = ws.find(building_name)
         headers = ws.row_values(1)
         headers = [h.strip() for h in headers]
+        
         if "Agent Name" in headers:
             idx = headers.index("Agent Name") + 1
             ws.update_cell(cell.row, idx, agent_name)
+            
         if "Agent Email" in headers:
             idx = headers.index("Agent Email") + 1
             ws.update_cell(cell.row, idx, agent_email)
+            
         clear_cache()
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
@@ -623,9 +699,11 @@ def save_checklist_batch(ws, building_name, edited_df_list):
         task = row['Task Name']
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
+        
         if 'Delete' in row and row['Delete']:
             rows_to_delete.append(row_idx)
             continue
+
         current_date_in_ui = str(row['Date Received']).strip()
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
@@ -815,10 +893,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1102,6 +1178,7 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
+            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1156,14 +1233,18 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
+                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
+                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
+                    
                     agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     agent_view = agent_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    agent_cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
+                    rep_col1 = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
+                    
                     edited_agent = st.data_editor(
-                        agent_view[agent_cols],
+                        agent_view[rep_col1],
                         column_config={
                             "Task Heading": st.column_config.TextColumn(disabled=True),
                             "Task Name": st.column_config.TextColumn(disabled=True),
@@ -1185,10 +1266,10 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
-                    st.warning("Legacy Data - No Headings Found")
-                    agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
+                    # Legacy Fallback
+                    rep_col1 = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
-                        agent_view[agent_cols],
+                        agent_view[rep_col1],
                         column_config={
                             "Received": st.column_config.CheckboxColumn(label="Received?"),
                             "Date Received": st.column_config.TextColumn(disabled=True),
@@ -1240,6 +1321,7 @@ def main():
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
+                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
@@ -1801,7 +1883,7 @@ def main():
                 else:
                     st.error("Accounts Department Email not set in Global Settings.")
 
-            with col2:
+            with rep_col2:
                 st.subheader("Finalize")
                 if st.button("Finalize Project"):
                     if pending_df.empty:
