@@ -53,8 +53,8 @@ def get_data(worksheet_name):
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
                 if worksheet_name == "Projects":
-                    # Added Council Email Sent Date
-                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date", "Debt Collection Email Sent Date", "Council Email Sent Date"])
+                    # Added Fee Confirmation Email Sent Date
+                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date", "Debt Collection Email Sent Date", "Council Email Sent Date", "Fee Confirmation Email Sent Date"])
                 if worksheet_name == "ServiceProviders":
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
                 if worksheet_name == "Employees":
@@ -375,9 +375,7 @@ def update_legal_status(complex_name, reset=False):
         st.error(f"Error updating Legal status: {e}")
         return False
 
-# --- NEW: COUNCIL EMAIL STATUS UPDATER ---
 def update_council_status(complex_name, reset=False):
-    """Updates the Council Email Sent Date."""
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -402,6 +400,34 @@ def update_council_status(complex_name, reset=False):
         return True
     except Exception as e:
         st.error(f"Error updating Council status: {e}")
+        return False
+
+def update_fee_status(complex_name, reset=False):
+    """Updates the Fee Confirmation Email Sent Date."""
+    sh = get_google_sheet()
+    if not sh: return False
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        
+        if "Fee Confirmation Email Sent Date" not in headers:
+             st.error("Please add 'Fee Confirmation Email Sent Date' header to Projects tab.")
+             return False
+        
+        col_idx = headers.index("Fee Confirmation Email Sent Date") + 1
+        
+        if reset:
+            ws.update_cell(row_num, col_idx, "")
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            ws.update_cell(row_num, col_idx, today)
+            
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating Fee status: {e}")
         return False
 
 def save_broker_details_to_project(complex_name, name, email):
@@ -460,7 +486,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- UPDATED: SMART ROW CREATION ---
+# --- SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     if not sh: return "CONNECTION_ERROR"
@@ -514,7 +540,8 @@ def create_new_building(data_dict):
         "Broker Email Sent Date": ["Broker Email Sent Date"],
         "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"],
         "Debt Collection Email Sent Date": ["Debt Collection Email Sent Date"],
-        "Council Email Sent Date": ["Council Email Sent Date"]
+        "Council Email Sent Date": ["Council Email Sent Date"],
+        "Fee Confirmation Email Sent Date": ["Fee Confirmation Email Sent Date"]
     }
 
     for i, header in enumerate(headers):
@@ -572,9 +599,7 @@ def update_building_details_batch(complex_name, updates):
         row_num = cell.row
         headers = ws.row_values(1) 
         headers = [h.strip() for h in headers]
-        
         cells_to_update = []
-        
         for col_name, new_value in updates.items():
             if col_name in headers:
                 col_index = headers.index(col_name) + 1
@@ -593,7 +618,6 @@ def update_building_details_batch(complex_name, updates):
                                 col_index = headers.index(alt) + 1
                                 cells_to_update.append(gspread.Cell(row_num, col_index, new_value))
                                 break
-        
         if cells_to_update:
             ws.update_cells(cells_to_update)
             clear_cache()
@@ -911,10 +935,11 @@ def main():
             s_comp = st.text_input("Compliance Department", value=settings_dict.get("Compliance", ""))
             s_debt = st.text_input("Debt Collection Department", value=settings_dict.get("Debt Collection", ""))
             s_ins = st.text_input("Insurance Department", value=settings_dict.get("Insurance", ""))
+            s_acc = st.text_input("Accounts Department", value=settings_dict.get("Accounts", ""))
             if st.form_submit_button("Save Global Settings"):
                 new_settings = {
                     "Wages": s_wages, "SARS": s_sars, "Municipal": s_muni,
-                    "Compliance": s_comp, "Debt Collection": s_debt, "Insurance": s_ins
+                    "Compliance": s_comp, "Debt Collection": s_debt, "Insurance": s_ins, "Accounts": s_acc
                 }
                 if save_global_settings(new_settings):
                     st.success("Global Settings Saved!")
@@ -1015,6 +1040,7 @@ def main():
             assistant_email = str(proj_row.get('Assistant Email', ''))
             bookkeeper_name = str(proj_row.get('Bookkeeper Name', ''))
             bookkeeper_email = str(proj_row.get('Bookkeeper Email', ''))
+            mgmt_fees = str(proj_row.get('Mgmt Fees', ''))
             wages_sent_date = str(proj_row.get('Wages Sent Date', ''))
             wages_count_saved = str(proj_row.get('Wages Employee Count', '0'))
             sars_sent_date = str(proj_row.get('SARS Sent Date', ''))
@@ -1025,6 +1051,7 @@ def main():
             broker_email_saved = str(proj_row.get('Insurance Broker Email', ''))
             legal_sent_date = str(proj_row.get('Debt Collection Email Sent Date', ''))
             council_sent_date = str(proj_row.get('Council Email Sent Date', ''))
+            fee_email_sent = str(proj_row.get('Fee Confirmation Email Sent Date', ''))
 
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
@@ -1115,6 +1142,7 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
+            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1171,7 +1199,7 @@ def main():
                 
                 # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- UPDATED HEADINGS ORDER ---
+                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
                     all_edited_dfs = []
@@ -1878,6 +1906,44 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
+
+            # --- NEW: MANAGEMENT FEE CONFIRMATION ---
+            st.markdown("---")
+            st.markdown("#### 💰 Management Fee Confirmation")
+            
+            if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
+                st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
+                with st.expander("Need to resend?"):
+                    if st.button("Reset Fee Status"):
+                        update_fee_status(b_choice, reset=True)
+                        st.rerun()
+            else:
+                settings_df = get_data("Settings")
+                acc_email = ""
+                if not settings_df.empty:
+                    # Look for 'Accounts' or 'Finance'
+                    row = settings_df[settings_df['Department'].str.contains("Accounts", case=False, na=False)]
+                    if not row.empty: acc_email = row.iloc[0]['Email']
+                
+                if acc_email:
+                    st.info(f"Sending to: {acc_email} (Accounts Dept)")
+                    if st.button("Draft Fee Confirmation Email"):
+                         if update_fee_status(b_choice):
+                            subj = f"Management Fee Confirmation: {b_choice}"
+                            body = (f"Dear Accounts Department,\n\n"
+                                    f"Please confirm the loading of management fees for the new take-on: {b_choice}.\n\n"
+                                    f"Management Fee: R{mgmt_fees} (Excl VAT)\n"
+                                    f"Effective Date: {take_on_date}\n\n"
+                                    f"Please confirm once loaded.\n\n"
+                                    f"Regards,\n{takeon_name}")
+                            
+                            safe_subj = urllib.parse.quote(subj)
+                            safe_body = urllib.parse.quote(body)
+                            link = f'<a href="mailto:{acc_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Fee Email</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                            st.success("Status updated! Click link above.")
+                else:
+                    st.error("Accounts Department Email not set in Global Settings.")
 
             with col2:
                 st.subheader("Finalize")
