@@ -542,13 +542,6 @@ def create_new_building(data_dict):
     new_rows.append([data_dict["Complex Name"], owner_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], closing_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     
-    # --- INSERT NEW ITEMS HERE: BANK & CLOSING BALANCES ---
-    day_before_date = (datetime.strptime(str(data_dict["Take On Date"]), "%Y-%m-%d") - timedelta(days=1)).strftime('%d %B %Y')
-    
-    new_rows.append([data_dict["Complex Name"], f"Final reconciliation of previous bank account and proof of transfer of funds to be provided on {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    new_rows.append([data_dict["Complex Name"], f"A final trial balance as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    new_rows.append([data_dict["Complex Name"], f"The latest cashflow statement as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -1773,6 +1766,72 @@ def main():
                                 st.success("Status Updated! Click link above.")
                         else:
                             st.error("Insurance Department Email not set in Global Settings.")
+
+            st.divider()
+            
+            # --- 11. REPORTS ---
+            st.markdown("### 11. Reports & Comms")
+            col1, col2 = st.columns(2)
+            pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
+            completed_df = items_df[items_df['Received'] == True]
+            with col1:
+                st.subheader("Client Update")
+                if st.button("Draft Client Email"):
+                    body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n"
+                    
+                    # --- NEW: DETAILED STATUS SECTION ---
+                    body += "📋 ITEMS ATTENDED TO / IN PROGRESS:\n"
+                    
+                    # Insurance Status
+                    ins_status = "Pending"
+                    if broker_email_sent: ins_status = f"Broker notified ({broker_email_sent})"
+                    if internal_ins_sent: ins_status += f", Internal Quote requested ({internal_ins_sent})"
+                    body += f"- Insurance: {ins_status}\n"
+                    
+                    # Employee Status
+                    emp_status = f"{len(employees_df)} loaded"
+                    if wages_sent_date: emp_status += f", Wages Dept notified ({wages_sent_date})"
+                    else: emp_status += ", Wages Dept pending"
+                    body += f"- Employees: {emp_status}\n"
+
+                    # Council Status
+                    body += f"- City Council: {len(council_df)} accounts loaded.\n"
+
+                    # Service Providers
+                    prov_emailed = len(providers_df[providers_df['Date Emailed'] != ''])
+                    body += f"- Service Providers: {len(providers_df)} loaded. {prov_emailed} appointment emails sent.\n"
+
+                    # SARS
+                    sars_stat = f"Tax Number: {tax_number}" if tax_number else "Pending Tax Number"
+                    if sars_sent_date: sars_stat += f", Dept Notified ({sars_sent_date})"
+                    body += f"- SARS: {sars_stat}\n"
+                    
+                    # Legal
+                    leg_stat = f"{len(arrears_df)} matters loaded"
+                    if legal_sent_date: leg_stat += f", Debt Collection Notified ({legal_sent_date})"
+                    body += f"- Legal/Arrears: {leg_stat}\n\n"
+                    
+                    # --- EXISTING SECTIONS ---
+                    body += "⚠️ OUTSTANDING ITEMS:\n"
+                    if pending_df.empty: body += "- None\n"
+                    else:
+                        for _, row in pending_df.iterrows():
+                            note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
+                            body += f"- {row['Task Name']} (Action: {row['Responsibility']}){note_text}\n"
+                    
+                    body += "\n✅ RECEIVED ITEMS:\n"
+                    for _, row in completed_df.iterrows():
+                        note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
+                        body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
+
+                    body += f"\nRegards,\n{takeon_name}\nPretor Group"
+                    
+                    safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
+                    safe_body = urllib.parse.quote(body)
+                    safe_emails = client_email.replace(";", ",")
+                    cc_param = f"&cc={cc_string}" if cc_string else ""
+                    link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
+                    st.markdown(link, unsafe_allow_html=True)
 
             # --- NEW: MANAGEMENT FEE CONFIRMATION ---
             st.markdown("---")
