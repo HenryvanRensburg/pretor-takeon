@@ -319,6 +319,10 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
+    """
+    Updates insurance email status.
+    email_type: 'Broker' or 'Internal'
+    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -457,10 +461,8 @@ def save_broker_details_to_project(complex_name, name, email):
 # --- DATE LOGIC (V6) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     """
-    Calculates periods:
-    - Request End = Take On - 1 Day.
-    - Current Start = 1st of Month following Year End.
-    - Historic Block = 5 Years range ending 1 day before Current Start.
+    Calculates periods.
+    Includes new 'Owner Balances' request (1 day prior to appointment).
     """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
@@ -500,13 +502,16 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
         historic_start_date = current_fin_year_start - relativedelta(years=5)
         historic_period_str = f"{historic_start_date.strftime('%d %B %Y')} to {historic_end_date.strftime('%d %B %Y')}"
             
-        # 5. Bank Statements - UPDATED STRING
+        # 5. Bank Statements
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank account statements as of {bank_start.strftime('%d %B %Y')} as well as confirmation that the funds has been paid over to Pretor Group."
         
-        return current_period_str, historic_period_str, bank_str
+        # 6. Owner Balances (New Requirement)
+        owner_bal_str = f"Owner balances to be provided on {request_end_date.strftime('%d %B %Y')}."
+
+        return current_period_str, historic_period_str, bank_str, owner_bal_str
     except Exception as e:
-        return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
+        return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements", "Owner Balances"
 
 # --- SMART ROW CREATION ---
 def create_new_building(data_dict):
@@ -587,11 +592,15 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    curr_fin, historic_block, bank_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    # Unpack the 4 return values including Owner Balances
+    curr_fin, historic_block, bank_req, owner_bal_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+    # Add the new Owner Balance Item
+    new_rows.append([data_dict["Complex Name"], owner_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
@@ -683,9 +692,11 @@ def save_checklist_batch(ws, building_name, edited_df_list):
         task = row['Task Name']
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
+        
         if 'Delete' in row and row['Delete']:
             rows_to_delete.append(row_idx)
             continue
+
         current_date_in_ui = str(row['Date Received']).strip()
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
@@ -875,8 +886,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1023,6 +1036,7 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
+                    # Removed the second argument (has_arrears) as it was deleted in previous step
                     result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
@@ -1651,12 +1665,9 @@ def main():
             if not trustees_df.empty:
                 st.dataframe(trustees_df[["Name", "Surname", "Email", "Phone"]], hide_index=True)
                 
-                if trustee_email_sent and trustee_email_sent != "None" and trustee_email_sent != "":
-                    st.success(f"✅ Trustee account request sent on {trustee_email_sent}")
-                    if st.button("Reset Trustee Status"):
-                         update_trustee_status(b_choice) # Note: this function doesn't have a reset arg yet, let's fix it below or manually edit. 
-                         # For now I'll just fix the logic flow.
-                         st.info("Reset manual edit required for now.")
+                trustee_sent = str(proj_row.get('Trustee Email Sent Date', ''))
+                if trustee_sent and trustee_sent != "None" and trustee_sent != "":
+                    st.success(f"✅ Trustee account request sent on {trustee_sent}")
                 else:
                     if st.button("Draft Bookkeeper Email (Open Accounts)"):
                         if bookkeeper_email and bookkeeper_email != "None":
