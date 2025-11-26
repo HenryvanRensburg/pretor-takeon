@@ -815,8 +815,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1100,7 +1102,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1155,16 +1156,12 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
-                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- UPDATED HEADINGS ORDER ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
-                    
                     agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     agent_view = agent_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
                     agent_cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
-                    
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
                         column_config={
@@ -1188,7 +1185,7 @@ def main():
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
-                    # Legacy Fallback
+                    st.warning("Legacy Data - No Headings Found")
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1243,7 +1240,6 @@ def main():
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
-                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
@@ -1766,72 +1762,6 @@ def main():
                                 st.success("Status Updated! Click link above.")
                         else:
                             st.error("Insurance Department Email not set in Global Settings.")
-
-            st.divider()
-            
-            # --- 11. REPORTS ---
-            st.markdown("### 11. Reports & Comms")
-            col1, col2 = st.columns(2)
-            pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
-            completed_df = items_df[items_df['Received'] == True]
-            with col1:
-                st.subheader("Client Update")
-                if st.button("Draft Client Email"):
-                    body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n"
-                    
-                    # --- NEW: DETAILED STATUS SECTION ---
-                    body += "📋 ITEMS ATTENDED TO / IN PROGRESS:\n"
-                    
-                    # Insurance Status
-                    ins_status = "Pending"
-                    if broker_email_sent: ins_status = f"Broker notified ({broker_email_sent})"
-                    if internal_ins_sent: ins_status += f", Internal Quote requested ({internal_ins_sent})"
-                    body += f"- Insurance: {ins_status}\n"
-                    
-                    # Employee Status
-                    emp_status = f"{len(employees_df)} loaded"
-                    if wages_sent_date: emp_status += f", Wages Dept notified ({wages_sent_date})"
-                    else: emp_status += ", Wages Dept pending"
-                    body += f"- Employees: {emp_status}\n"
-
-                    # Council Status
-                    body += f"- City Council: {len(council_df)} accounts loaded.\n"
-
-                    # Service Providers
-                    prov_emailed = len(providers_df[providers_df['Date Emailed'] != ''])
-                    body += f"- Service Providers: {len(providers_df)} loaded. {prov_emailed} appointment emails sent.\n"
-
-                    # SARS
-                    sars_stat = f"Tax Number: {tax_number}" if tax_number else "Pending Tax Number"
-                    if sars_sent_date: sars_stat += f", Dept Notified ({sars_sent_date})"
-                    body += f"- SARS: {sars_stat}\n"
-                    
-                    # Legal
-                    leg_stat = f"{len(arrears_df)} matters loaded"
-                    if legal_sent_date: leg_stat += f", Debt Collection Notified ({legal_sent_date})"
-                    body += f"- Legal/Arrears: {leg_stat}\n\n"
-                    
-                    # --- EXISTING SECTIONS ---
-                    body += "⚠️ OUTSTANDING ITEMS:\n"
-                    if pending_df.empty: body += "- None\n"
-                    else:
-                        for _, row in pending_df.iterrows():
-                            note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
-                            body += f"- {row['Task Name']} (Action: {row['Responsibility']}){note_text}\n"
-                    
-                    body += "\n✅ RECEIVED ITEMS:\n"
-                    for _, row in completed_df.iterrows():
-                        note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
-                        body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
-
-                    body += f"\nRegards,\n{takeon_name}\nPretor Group"
-                    
-                    safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
-                    safe_body = urllib.parse.quote(body)
-                    safe_emails = client_email.replace(";", ",")
-                    cc_param = f"&cc={cc_string}" if cc_string else ""
-                    link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
-                    st.markdown(link, unsafe_allow_html=True)
 
             # --- NEW: MANAGEMENT FEE CONFIRMATION ---
             st.markdown("---")
