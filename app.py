@@ -461,8 +461,11 @@ def save_broker_details_to_project(complex_name, name, email):
 # --- DATE LOGIC (V6) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     """
-    Calculates periods.
-    Includes new 'Owner Balances' request (1 day prior to appointment).
+    Calculates periods:
+    - Request End = Take On - 1 Day.
+    - Current Start = 1st of Month following Year End.
+    - Historic Block = 5 Years range ending 1 day before Current Start.
+    - Closing Balance Deadline = 10 days after Take On.
     """
     try:
         take_on_date = datetime.strptime(take_on_date_str, "%Y-%m-%d")
@@ -506,12 +509,16 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
         bank_start = take_on_date - relativedelta(months=1)
         bank_str = f"Bank account statements as of {bank_start.strftime('%d %B %Y')} as well as confirmation that the funds has been paid over to Pretor Group."
         
-        # 6. Owner Balances (New Requirement)
+        # 6. Owner Balances (1 Day Prior)
         owner_bal_str = f"Owner balances to be provided on {request_end_date.strftime('%d %B %Y')}."
 
-        return current_period_str, historic_period_str, bank_str, owner_bal_str
+        # 7. Final Closing Balances (10 Days After)
+        closing_date = take_on_date + timedelta(days=10)
+        closing_bal_str = f"Final bank closing balances to be provided by {closing_date.strftime('%d %B %Y')} as well as confirmation that the funds has been paid over to Pretor Group."
+
+        return current_period_str, historic_period_str, bank_str, owner_bal_str, closing_bal_str
     except Exception as e:
-        return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements", "Owner Balances"
+        return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements", "Owner Balances", "Final Closing Balances"
 
 # --- SMART ROW CREATION ---
 def create_new_building(data_dict):
@@ -592,15 +599,15 @@ def create_new_building(data_dict):
     ws_checklist = sh.worksheet("Checklist")
     new_rows = []
     
-    # Unpack the 4 return values including Owner Balances
-    curr_fin, historic_block, bank_req, owner_bal_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
+    # Unpack ALL 5 return values
+    curr_fin, historic_block, bank_req, owner_bal_req, closing_bal_req = calculate_financial_periods(str(data_dict["Take On Date"]), data_dict["Year End"])
     
     new_rows.append([data_dict["Complex Name"], curr_fin, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic Financial Records: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], f"Historic General Correspondence: {historic_block}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], bank_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
-    # Add the new Owner Balance Item
     new_rows.append([data_dict["Complex Name"], owner_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+    new_rows.append([data_dict["Complex Name"], closing_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
@@ -886,10 +893,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -1036,7 +1041,6 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
-                    # Removed the second argument (has_arrears) as it was deleted in previous step
                     result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
@@ -1174,7 +1178,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1229,54 +1232,36 @@ def main():
                 agent_view = items_df[(items_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (items_df['Delete'] == False)].copy()
                 if 'Completed By' not in agent_view.columns: agent_view['Completed By'] = ""
                 
-                # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
+                    agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
+                    agent_view = agent_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    all_edited_dfs = []
-                    for sec in sections:
-                        sec_df = agent_view[agent_view['Task Heading'] == sec]
-                        if not sec_df.empty:
-                            st.markdown(f"#### {sec}")
-                            cols_to_show = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
-                            edited_sec = st.data_editor(
-                                sec_df[cols_to_show],
-                                column_config={
-                                    "Received": st.column_config.CheckboxColumn(label="Received?"),
-                                    "Date Received": st.column_config.TextColumn(disabled=True),
-                                    "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
-                                },
-                                disabled=["Task Name", "Date Received"], hide_index=True, key=f"editor_agent_{sec}"
-                            )
-                            all_edited_dfs.append(edited_sec)
-                    
-                    # Uncategorized
-                    unknown_df = agent_view[~agent_view['Task Heading'].isin(sections)]
-                    if not unknown_df.empty:
-                        st.markdown(f"#### Uncategorized")
-                        cols_to_show = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
-                        edited_unk = st.data_editor(
-                            unknown_df[cols_to_show],
-                            column_config={
-                                "Received": st.column_config.CheckboxColumn(label="Received?"),
-                                "Date Received": st.column_config.TextColumn(disabled=True),
-                                "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
-                            },
-                            disabled=["Task Name", "Date Received"], hide_index=True, key="editor_agent_unknown"
-                        )
-                        all_edited_dfs.append(edited_unk)
-
+                    agent_cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
+                    edited_agent = st.data_editor(
+                        agent_view[agent_cols],
+                        column_config={
+                            "Task Heading": st.column_config.TextColumn(disabled=True),
+                            "Task Name": st.column_config.TextColumn(disabled=True),
+                            "Received": st.column_config.CheckboxColumn(label="Received?"),
+                            "Date Received": st.column_config.TextColumn(disabled=True),
+                            "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
+                        },
+                        disabled=["Task Heading", "Task Name", "Date Received"],
+                        hide_index=True,
+                        key="unified_agent_editor",
+                        height=600
+                    )
                     if st.button("Save Agent Updates"):
                         sh = get_google_sheet()
                         if sh:
                             ws = sh.worksheet("Checklist")
                             with st.spinner("Saving..."):
-                                save_checklist_batch(ws, b_choice, all_edited_dfs)
+                                save_checklist_batch(ws, b_choice, [edited_agent])
                             st.success("Agent Tracker Saved!")
                             st.rerun()
                 else:
-                    # Legacy Fallback
+                    st.warning("Legacy Data - No Headings Found")
                     agent_cols = ['Task Name', 'Received', 'Date Received', 'Completed By', 'Notes']
                     edited_agent = st.data_editor(
                         agent_view[agent_cols],
@@ -1303,58 +1288,34 @@ def main():
                 
                 if 'Task Heading' in full_view.columns:
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
-                    all_edited_dfs = []
+                    full_view['Heading_Order'] = full_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
+                    full_view = full_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    for sec in sections:
-                        sec_df = full_view[full_view['Task Heading'] == sec]
-                        if not sec_df.empty:
-                            st.markdown(f"#### {sec}")
-                            cols_to_show = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
-                            edited_sec = st.data_editor(
-                                sec_df[cols_to_show],
-                                column_config={
-                                    "Received": st.column_config.CheckboxColumn(label="Completed?"),
-                                    "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                                    "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
-                                    "Delete": st.column_config.CheckboxColumn(),
-                                    "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
-                                },
-                                disabled=["Task Name", "Date Received"],
-                                hide_index=True,
-                                key=f"editor_full_{sec}"
-                            )
-                            all_edited_dfs.append(edited_sec)
-                            
-                    # Uncategorized
-                    unknown_df = full_view[~full_view['Task Heading'].isin(sections)]
-                    if not unknown_df.empty:
-                        st.markdown(f"#### Uncategorized")
-                        cols_to_show = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
-                        edited_unk = st.data_editor(
-                            unknown_df[cols_to_show],
-                            column_config={
-                                "Received": st.column_config.CheckboxColumn(label="Completed?"),
-                                "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                                "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
-                                "Delete": st.column_config.CheckboxColumn(),
-                                "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
-                            },
-                            disabled=["Task Name", "Date Received"],
-                            hide_index=True,
-                            key="editor_full_unknown"
-                        )
-                        all_edited_dfs.append(edited_unk)
-                        
+                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
+                    edited_full = st.data_editor(
+                        full_view[cols_to_show],
+                        column_config={
+                            "Task Heading": st.column_config.TextColumn(disabled=True),
+                            "Task Name": st.column_config.TextColumn(disabled=True),
+                            "Received": st.column_config.CheckboxColumn(label="Completed?"),
+                            "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                            "Delete": st.column_config.CheckboxColumn(),
+                            "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
+                        },
+                        disabled=["Task Heading", "Task Name", "Date Received"],
+                        hide_index=True,
+                        key="unified_full_editor",
+                        height=600
+                    )
                     if st.button("Save Internal Tracker"):
                         sh = get_google_sheet()
                         if sh:
                             ws = sh.worksheet("Checklist")
                             with st.spinner("Saving..."):
-                                save_checklist_batch(ws, b_choice, all_edited_dfs)
+                                save_checklist_batch(ws, b_choice, [edited_full])
                             st.success("Internal Tracker Saved!")
                             st.rerun()
                 else:
-                     # Legacy
                     full_cols = ['Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[full_cols],
