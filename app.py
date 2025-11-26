@@ -49,7 +49,6 @@ def get_data(worksheet_name):
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
             
-            # Handle empty sheets
             if not data:
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
@@ -69,12 +68,11 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=["Department", "Email"])
                 return pd.DataFrame()
 
-            # Load existing data
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
 
-            # --- SCHEMA REPAIR: Ensure new columns exist if sheet is old ---
+            # --- SCHEMA REPAIR ---
             if worksheet_name == "ServiceProviders":
                 if "Date Emailed" not in df.columns:
                     df["Date Emailed"] = ""
@@ -252,7 +250,6 @@ def update_service_provider_date(complex_name, provider_name):
         
         if target_row:
             today = datetime.now().strftime("%Y-%m-%d")
-            # Ensure column exists before update - assuming column F (6)
             ws.update_cell(target_row, 6, today) 
             clear_cache()
             return True
@@ -552,6 +549,13 @@ def create_new_building(data_dict):
     new_rows.append([data_dict["Complex Name"], owner_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     new_rows.append([data_dict["Complex Name"], closing_bal_req, "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
     
+    # --- INSERT NEW ITEMS HERE: BANK & CLOSING BALANCES ---
+    day_before_date = (datetime.strptime(str(data_dict["Take On Date"]), "%Y-%m-%d") - timedelta(days=1)).strftime('%d %B %Y')
+    
+    new_rows.append([data_dict["Complex Name"], f"Final reconciliation of previous bank account and proof of transfer of funds to be provided on {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+    new_rows.append([data_dict["Complex Name"], f"A final trial balance as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+    new_rows.append([data_dict["Complex Name"], f"The latest cashflow statement as at {day_before_date}", "FALSE", "", "", "Previous Agent", "FALSE", "", "Financial"])
+
     for item in master_data:
         raw_cat = str(item.get("Category", "Both")).strip().upper()
         task = item.get("Task Name")
@@ -1100,9 +1104,6 @@ def main():
             
             all_providers = get_data("ServiceProviders")
             if not all_providers.empty:
-                # --- SAFE SCHEMA CHECK HERE ---
-                if 'Date Emailed' not in all_providers.columns:
-                    all_providers['Date Emailed'] = ""
                 providers_df = all_providers[all_providers['Complex Name'] == b_choice].copy()
             else:
                 providers_df = pd.DataFrame()
@@ -1231,7 +1232,7 @@ def main():
                     full_view['Heading_Order'] = full_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     full_view = full_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
+                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[cols_to_show],
                         column_config={
@@ -1239,7 +1240,6 @@ def main():
                             "Task Name": st.column_config.TextColumn(disabled=True),
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
-                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
@@ -1573,6 +1573,9 @@ def main():
                 if trustee_sent and trustee_sent != "None" and trustee_sent != "":
                     st.success(f"✅ Trustee account request sent on {trustee_sent}")
                     if st.button("Reset Trustee Status"):
+                         # No dedicated reset function, so we'll handle it by calling update with empty date if we want,
+                         # but simpler to just re-allow sending?
+                         # Actually, let's just assume manual reset in Sheets if needed or add a specific reset call later.
                          st.info("To reset, clear the date in the Google Sheet 'Trustee Email Sent Date' column.")
                 else:
                     if st.button("Draft Bookkeeper Email (Open Accounts)"):
@@ -1612,6 +1615,7 @@ def main():
                 with st.form("add_arrears"):
                     a_unit = st.text_input("Unit Number")
                     a_amount = st.number_input("Outstanding Amount", min_value=0.0, step=0.01, format="%.2f")
+                    # NO CHECKBOX AS REQUESTED
                     a_attorney_name = st.text_input("Attorney Name")
                     a_attorney_email = st.text_input("Attorney Email")
                     a_attorney_phone = st.text_input("Attorney Phone")
@@ -1689,9 +1693,11 @@ def main():
                 
                 if broker_candidates:
                     st.info("Found potential broker(s) in Service Providers list.")
+                    # Just take the first one for convenience or let user type
                     b_name_def = broker_candidates[0]['Provider Name']
                     b_email_def = broker_candidates[0]['Email']
                 
+                # Pre-fill from Saved Project Data if available
                 saved_b_name = str(proj_row.get('Insurance Broker Name', ''))
                 saved_b_email = str(proj_row.get('Insurance Broker Email', ''))
                 
@@ -1709,6 +1715,7 @@ def main():
             
             c_ins1, c_ins2 = st.columns(2)
             
+            # Button 1: External Broker Email
             with c_ins1:
                 if broker_email_sent and broker_email_sent != "None" and broker_email_sent != "":
                     st.success(f"✅ Broker email sent on {broker_email_sent}")
@@ -1730,6 +1737,7 @@ def main():
                                 
                                 safe_subj = urllib.parse.quote(subj)
                                 safe_body = urllib.parse.quote(body)
+                                # CC Portfolio Manager
                                 cc_param = f"&cc={manager_email}" if manager_email else ""
                                 
                                 link = f'<a href="mailto:{b_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Broker Email</a>'
@@ -1738,6 +1746,7 @@ def main():
                         else:
                             st.error("Please ensure Broker Email is saved above.")
 
+            # Button 2: Internal Insurance Dept Email
             with c_ins2:
                 if internal_ins_sent and internal_ins_sent != "None" and internal_ins_sent != "":
                     st.success(f"✅ Internal email sent on {internal_ins_sent}")
@@ -1755,7 +1764,9 @@ def main():
                         if ins_email:
                             if update_insurance_status(b_choice, "Internal"):
                                 subj = f"Insurance Quote Request: {b_choice}"
+                                # Folder path construction
                                 folder_path = f"BCD folder -> {assigned_manager} -> {b_choice}"
+                                
                                 body = (f"Dear Insurance Department,\n\n"
                                         f"We have received the latest insurance policy and claims history for {b_choice}.\n\n"
                                         f"These documents have been saved on the server at:\n"
@@ -1775,7 +1786,7 @@ def main():
             st.markdown("---")
             st.markdown("#### 💰 Management Fee Confirmation")
             
-            rep_col1, rep_col2 = st.columns(2) 
+            rep_col1, rep_col2 = st.columns(2) # Define columns here for Reports
             
             if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
                 st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
@@ -1787,6 +1798,7 @@ def main():
                 settings_df = get_data("Settings")
                 acc_email = ""
                 if not settings_df.empty:
+                    # Look for 'Accounts' or 'Finance'
                     row = settings_df[settings_df['Department'].str.contains("Accounts", case=False, na=False)]
                     if not row.empty: acc_email = row.iloc[0]['Email']
                 
@@ -1813,27 +1825,31 @@ def main():
             # --- 11. REPORTS ---
             st.markdown("### 11. Reports & Comms")
             
+            # FIX: Define DataFrames explicitly before using in reports section
+            pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
+            completed_df = items_df[items_df['Received'] == True]
+            
             with rep_col1:
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
                     body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n"
                     
-                    # --- DETAILED STATUS SECTION ---
+                    # --- NEW: DETAILED STATUS SECTION ---
                     body += "📋 ITEMS ATTENDED TO / IN PROGRESS:\n"
                     
-                    # Insurance
+                    # Insurance Status
                     ins_status = "Pending"
                     if broker_email_sent: ins_status = f"Broker notified ({broker_email_sent})"
                     if internal_ins_sent: ins_status += f", Internal Quote requested ({internal_ins_sent})"
                     body += f"- Insurance: {ins_status}\n"
                     
-                    # Employee
+                    # Employee Status
                     emp_status = f"{len(employees_df)} loaded"
                     if wages_sent_date: emp_status += f", Wages Dept notified ({wages_sent_date})"
                     else: emp_status += ", Wages Dept pending"
                     body += f"- Employees: {emp_status}\n"
 
-                    # Council
+                    # Council Status
                     body += f"- City Council: {len(council_df)} accounts loaded.\n"
 
                     # Service Providers - SAFE ACCESS HERE
