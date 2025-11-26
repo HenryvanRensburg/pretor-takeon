@@ -49,7 +49,6 @@ def get_data(worksheet_name):
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
             
-            # Handle empty sheets
             if not data:
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
@@ -69,7 +68,6 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=["Department", "Email"])
                 return pd.DataFrame()
 
-            # Load existing data
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
@@ -835,10 +833,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -854,13 +850,21 @@ def main():
                 c_name = row['Complex Name']
                 c_items = checklist[checklist['Complex Name'] == c_name]
                 valid_items = c_items[c_items['Delete'] != 'TRUE']
-                total = len(valid_items)
-                received = len(valid_items[valid_items['Received'] == 'TRUE'])
+                
+                # CHANGED LOGIC HERE
+                # Exclude "Previous Agent" items from total count
+                # We only want to track items assigned to Pretor (or Both, since that involves Pretor)
+                pretor_items = valid_items[valid_items['Responsibility'].isin(['Pretor Group', 'Both'])]
+                
+                total = len(pretor_items)
+                received = len(pretor_items[pretor_items['Received'] == 'TRUE'])
+                
                 progress_val = (received / total) if total > 0 else 0
                 if progress_val == 1.0: status = "✅ Completed"
                 elif progress_val > 0.8: status = "⚠️ Near Completion"
                 elif progress_val > 0.1: status = "🔄 In Progress"
                 else: status = "🆕 Just Started"
+                
                 summary_list.append({
                     "Complex Name": c_name,
                     "Type": row['Type'],
@@ -1182,7 +1186,7 @@ def main():
                 
                 # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- UPDATED HEADINGS ORDER ---
+                    # --- NEW HEADINGS ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
                     agent_view['Heading_Order'] = agent_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
@@ -1251,6 +1255,7 @@ def main():
                             "Task Name": st.column_config.TextColumn(disabled=True),
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
