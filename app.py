@@ -19,9 +19,6 @@ SCOPES = [
 
 # --- GOOGLE SHEETS CONNECTION (ROBUST RETRY) ---
 def get_google_sheet(retries=5, delay=2):
-    """
-    Connects to Google Sheets with exponential backoff to handle 429 Rate Limit errors.
-    """
     for i in range(retries):
         try:
             credentials_dict = st.secrets["gcp_service_account"]
@@ -30,7 +27,6 @@ def get_google_sheet(retries=5, delay=2):
             sheet = client.open("Pretor TakeOn DB")
             return sheet
         except Exception as e:
-            # Check for Rate Limit Error (429)
             error_str = str(e)
             if "429" in error_str or "Quota exceeded" in error_str:
                 wait_time = delay * (i + 1)
@@ -53,12 +49,11 @@ def get_data(worksheet_name):
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
             
-            # CRITICAL FIX: Handle empty sheets by returning empty DFs with CORRECT headers
             if not data:
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
                 if worksheet_name == "Projects":
-                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date"])
+                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date"])
                 if worksheet_name == "ServiceProviders":
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
                 if worksheet_name == "Employees":
@@ -78,7 +73,6 @@ def get_data(worksheet_name):
             df.columns = df.columns.str.strip()
             return df
         except gspread.exceptions.WorksheetNotFound:
-            # If sheet doesn't exist, return empty DF with headers so app doesn't crash
             if worksheet_name == "Trustees":
                  return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "Email", "Phone"])
             return pd.DataFrame()
@@ -324,6 +318,59 @@ def update_trustee_status(complex_name):
         st.error(f"Error updating Trustee status: {e}")
         return False
 
+def update_insurance_status(complex_name, email_type, reset=False):
+    """
+    Updates insurance email status.
+    email_type: 'Broker' or 'Internal'
+    """
+    sh = get_google_sheet()
+    if not sh: return False
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        
+        col_name = "Broker Email Sent Date" if email_type == "Broker" else "Internal Ins Email Sent Date"
+        
+        if col_name not in headers:
+             st.error(f"Please add '{col_name}' header to Projects tab.")
+             return False
+        
+        col_idx = headers.index(col_name) + 1
+        
+        if reset:
+            ws.update_cell(row_num, col_idx, "")
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            ws.update_cell(row_num, col_idx, today)
+            
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating Insurance status: {e}")
+        return False
+
+def save_broker_details_to_project(complex_name, name, email):
+    sh = get_google_sheet()
+    if not sh: return
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        headers = ws.row_values(1)
+        
+        if "Insurance Broker Name" in headers:
+            idx = headers.index("Insurance Broker Name") + 1
+            ws.update_cell(cell.row, idx, name)
+            
+        if "Insurance Broker Email" in headers:
+            idx = headers.index("Insurance Broker Email") + 1
+            ws.update_cell(cell.row, idx, email)
+            
+        clear_cache()
+    except Exception as e:
+        st.error(f"Could not save Broker details: {e}")
+
 # --- DATE LOGIC (V5) ---
 def calculate_financial_periods(take_on_date_str, year_end_str):
     try:
@@ -353,7 +400,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- SMART ROW CREATION ---
+# --- UPDATED: SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     if not sh: return "CONNECTION_ERROR"
@@ -401,7 +448,11 @@ def create_new_building(data_dict):
         "Wages Sent Date": ["Wages Sent Date"],
         "Wages Employee Count": ["Wages Employee Count"],
         "SARS Sent Date": ["SARS Sent Date"],
-        "Trustee Email Sent Date": ["Trustee Email Sent Date"]
+        "Trustee Email Sent Date": ["Trustee Email Sent Date"],
+        "Insurance Broker Name": ["Insurance Broker Name"],
+        "Insurance Broker Email": ["Insurance Broker Email"],
+        "Broker Email Sent Date": ["Broker Email Sent Date"],
+        "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"]
     }
 
     for i, header in enumerate(headers):
@@ -492,8 +543,17 @@ def update_project_agent_details(building_name, agent_name, agent_email):
     ws = sh.worksheet("Projects")
     try:
         cell = ws.find(building_name)
-        ws.update_cell(cell.row, 24, agent_name)
-        ws.update_cell(cell.row, 25, agent_email)
+        headers = ws.row_values(1)
+        headers = [h.strip() for h in headers]
+        
+        if "Agent Name" in headers:
+            idx = headers.index("Agent Name") + 1
+            ws.update_cell(cell.row, idx, agent_name)
+            
+        if "Agent Email" in headers:
+            idx = headers.index("Agent Email") + 1
+            ws.update_cell(cell.row, idx, agent_email)
+            
         clear_cache()
     except Exception as e:
         st.error(f"Could not save agent details: {e}")
@@ -512,9 +572,11 @@ def save_checklist_batch(ws, building_name, edited_df_list):
         task = row['Task Name']
         row_idx = task_row_map.get(task)
         if not row_idx: continue 
+        
         if 'Delete' in row and row['Delete']:
             rows_to_delete.append(row_idx)
             continue
+
         current_date_in_ui = str(row['Date Received']).strip()
         user_val = str(row.get('Completed By', '')).strip()
         if user_val == "None": user_val = ""
@@ -546,9 +608,11 @@ def finalize_project_db(building_name):
     ws = sh.worksheet("Projects")
     cell = ws.find(building_name)
     final_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws.update_cell(cell.row, 22, "TRUE")
-    ws.update_cell(cell.row, 23, final_date)
-    ws.update_cell(cell.row, 20, final_date)
+    headers = ws.row_values(1)
+    if "Is_Finalized" in headers:
+        ws.update_cell(cell.row, headers.index("Is_Finalized")+1, "TRUE")
+    if "Finalized Date" in headers:
+        ws.update_cell(cell.row, headers.index("Finalized Date")+1, final_date)
     clear_cache()
     return final_date
 
@@ -702,8 +766,10 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
+    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
+        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -888,6 +954,10 @@ def main():
             wages_count_saved = str(proj_row.get('Wages Employee Count', '0'))
             sars_sent_date = str(proj_row.get('SARS Sent Date', ''))
             trustee_email_sent = str(proj_row.get('Trustee Email Sent Date', ''))
+            broker_email_sent = str(proj_row.get('Broker Email Sent Date', ''))
+            internal_ins_sent = str(proj_row.get('Internal Ins Email Sent Date', ''))
+            broker_name_saved = str(proj_row.get('Insurance Broker Name', ''))
+            broker_email_saved = str(proj_row.get('Insurance Broker Email', ''))
 
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
@@ -978,7 +1048,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1200,13 +1269,12 @@ def main():
                         cc_param = f"&cc={cc_string}" if cc_string else ""
                         link = f'<a href="mailto:{saved_agent_email}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Urgent Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
-            
+
             st.divider()
             
             # --- 4. REPORTS & COMMS (Including SARS) ---
-            st.markdown("### 4. Reports & Comms")
-            
-            st.markdown("#### 🏛️ SARS Department Handover")
+            st.markdown("### 4. SARS Department Handover")
+            st.info("Notify the SARS department about the new complex registration.")
             
             if sars_sent_date and sars_sent_date != "None" and sars_sent_date != "":
                 st.success(f"✅ SARS email sent on {sars_sent_date}")
