@@ -40,7 +40,7 @@ def get_google_sheet(retries=5, delay=2):
     st.error("Could not connect to Google Sheets after multiple attempts. Please wait a minute and reload.")
     return None
 
-# --- DATA FUNCTIONS (WITH CACHING & RETRY) ---
+# --- DATA FUNCTIONS (WITH SCHEMA REPAIR) ---
 @st.cache_data(ttl=20) 
 def get_data(worksheet_name):
     sh = get_google_sheet()
@@ -49,6 +49,7 @@ def get_data(worksheet_name):
             worksheet = sh.worksheet(worksheet_name)
             data = worksheet.get_all_values()
             
+            # Handle empty sheets
             if not data:
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
@@ -68,10 +69,33 @@ def get_data(worksheet_name):
                     return pd.DataFrame(columns=["Department", "Email"])
                 return pd.DataFrame()
 
+            # Load existing data
             headers = data.pop(0)
             df = pd.DataFrame(data, columns=headers)
             df.columns = df.columns.str.strip()
+
+            # --- SCHEMA REPAIR: Ensure new columns exist if sheet is old ---
+            if worksheet_name == "ServiceProviders":
+                if "Date Emailed" not in df.columns:
+                    df["Date Emailed"] = ""
+
+            if worksheet_name == "Projects":
+                required_cols = [
+                    "Debt Collection Email Sent Date", 
+                    "Council Email Sent Date", 
+                    "Fee Confirmation Email Sent Date",
+                    "Insurance Broker Name",
+                    "Insurance Broker Email",
+                    "Broker Email Sent Date",
+                    "Internal Ins Email Sent Date",
+                    "Trustee Email Sent Date"
+                ]
+                for col in required_cols:
+                    if col not in df.columns:
+                        df[col] = ""
+
             return df
+
         except gspread.exceptions.WorksheetNotFound:
             if worksheet_name == "Trustees":
                  return pd.DataFrame(columns=["Complex Name", "Name", "Surname", "Email", "Phone"])
@@ -243,6 +267,9 @@ def update_service_provider_date(complex_name, provider_name):
         
         if target_row:
             today = datetime.now().strftime("%Y-%m-%d")
+            # Check column index for "Date Emailed", it is usually col 6
+            # But safer to check headers if possible, though findall doesn't give headers easily.
+            # Assuming standard structure.
             ws.update_cell(target_row, 6, today) 
             clear_cache()
             return True
@@ -555,7 +582,6 @@ def create_new_building(data_dict):
         elif raw_cat == "HOA" and b_type == "HOA": should_copy = True
         if should_copy and task:
             new_rows.append([data_dict["Complex Name"], task, "FALSE", "", "", default_resp, "FALSE", "", task_heading])
-    
     if new_rows:
         ws_checklist.append_rows(new_rows)
     clear_cache() 
@@ -1219,7 +1245,7 @@ def main():
                     full_view['Heading_Order'] = full_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     full_view = full_view.sort_values(by=['Heading_Order', 'Task Name'])
                     
-                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
+                    cols_to_show = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Responsibility', 'Completed By', 'Notes', 'Delete']
                     edited_full = st.data_editor(
                         full_view[cols_to_show],
                         column_config={
@@ -1227,6 +1253,7 @@ def main():
                             "Task Name": st.column_config.TextColumn(disabled=True),
                             "Received": st.column_config.CheckboxColumn(label="Completed?"),
                             "Date Received": st.column_config.TextColumn(label="Date Completed", disabled=True),
+                            "Responsibility": st.column_config.SelectboxColumn("Action By", options=["Previous Agent", "Pretor Group", "Both"]),
                             "Delete": st.column_config.CheckboxColumn(),
                             "Completed By": st.column_config.SelectboxColumn("Completed By", options=team_list, required=False)
                         },
@@ -1768,16 +1795,48 @@ def main():
                         else:
                             st.error("Insurance Department Email not set in Global Settings.")
 
-            st.divider()
+            # --- NEW: MANAGEMENT FEE CONFIRMATION ---
+            st.markdown("---")
+            st.markdown("#### 💰 Management Fee Confirmation")
             
+            rep_col1, rep_col2 = st.columns(2) # Define columns here for Reports
+            
+            if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
+                st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
+                with st.expander("Need to resend?"):
+                    if st.button("Reset Fee Status"):
+                        update_fee_status(b_choice, reset=True)
+                        st.rerun()
+            else:
+                settings_df = get_data("Settings")
+                acc_email = ""
+                if not settings_df.empty:
+                    # Look for 'Accounts' or 'Finance'
+                    row = settings_df[settings_df['Department'].str.contains("Accounts", case=False, na=False)]
+                    if not row.empty: acc_email = row.iloc[0]['Email']
+                
+                if acc_email:
+                    st.info(f"Sending to: {acc_email} (Accounts Dept)")
+                    if st.button("Draft Fee Confirmation Email"):
+                         if update_fee_status(b_choice):
+                            subj = f"Management Fee Confirmation: {b_choice}"
+                            body = (f"Dear Accounts Department,\n\n"
+                                    f"Please confirm the loading of management fees for the new take-on: {b_choice}.\n\n"
+                                    f"Management Fee: R{mgmt_fees} (Excl VAT)\n"
+                                    f"Effective Date: {take_on_date}\n\n"
+                                    f"Please confirm once loaded.\n\n"
+                                    f"Regards,\n{takeon_name}")
+                            
+                            safe_subj = urllib.parse.quote(subj)
+                            safe_body = urllib.parse.quote(body)
+                            link = f'<a href="mailto:{acc_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Fee Email</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                            st.success("Status updated! Click link above.")
+                else:
+                    st.error("Accounts Department Email not set in Global Settings.")
+
             # --- 11. REPORTS ---
             st.markdown("### 11. Reports & Comms")
-            
-            # Define columns for Reports section explicitly
-            rep_col1, rep_col2 = st.columns(2)
-            
-            pending_df = items_df[(items_df['Received'] == False) & (items_df['Delete'] == False)]
-            completed_df = items_df[items_df['Received'] == True]
             
             with rep_col1:
                 st.subheader("Client Update")
@@ -1837,45 +1896,6 @@ def main():
                     cc_param = f"&cc={cc_string}" if cc_string else ""
                     link = f'<a href="mailto:{safe_emails}?subject={safe_subject}&body={safe_body}{cc_param}" target="_blank" style="text-decoration:none;">📩 Open Client Email</a>'
                     st.markdown(link, unsafe_allow_html=True)
-
-            # --- NEW: MANAGEMENT FEE CONFIRMATION ---
-            with rep_col1:
-                st.markdown("---")
-                st.markdown("#### 💰 Management Fee Confirmation")
-                
-                if fee_email_sent and fee_email_sent != "None" and fee_email_sent != "":
-                    st.success(f"✅ Fee confirmation sent on {fee_email_sent}")
-                    with st.expander("Need to resend?"):
-                        if st.button("Reset Fee Status"):
-                            update_fee_status(b_choice, reset=True)
-                            st.rerun()
-                else:
-                    settings_df = get_data("Settings")
-                    acc_email = ""
-                    if not settings_df.empty:
-                        # Look for 'Accounts' or 'Finance'
-                        row = settings_df[settings_df['Department'].str.contains("Accounts", case=False, na=False)]
-                        if not row.empty: acc_email = row.iloc[0]['Email']
-                    
-                    if acc_email:
-                        st.info(f"Sending to: {acc_email} (Accounts Dept)")
-                        if st.button("Draft Fee Confirmation Email"):
-                             if update_fee_status(b_choice):
-                                subj = f"Management Fee Confirmation: {b_choice}"
-                                body = (f"Dear Accounts Department,\n\n"
-                                        f"Please confirm the loading of management fees for the new take-on: {b_choice}.\n\n"
-                                        f"Management Fee: R{mgmt_fees} (Excl VAT)\n"
-                                        f"Effective Date: {take_on_date}\n\n"
-                                        f"Please confirm once loaded.\n\n"
-                                        f"Regards,\n{takeon_name}")
-                                
-                                safe_subj = urllib.parse.quote(subj)
-                                safe_body = urllib.parse.quote(body)
-                                link = f'<a href="mailto:{acc_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Fee Email</a>'
-                                st.markdown(link, unsafe_allow_html=True)
-                                st.success("Status updated! Click link above.")
-                    else:
-                        st.error("Accounts Department Email not set in Global Settings.")
 
             with rep_col2:
                 st.subheader("Finalize")
