@@ -319,10 +319,6 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
-    """
-    Updates insurance email status.
-    email_type: 'Broker' or 'Internal'
-    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -351,6 +347,7 @@ def update_insurance_status(complex_name, email_type, reset=False):
         st.error(f"Error updating Insurance status: {e}")
         return False
 
+# --- NEW: SAVE BROKER DETAILS ---
 def save_broker_details_to_project(complex_name, name, email):
     sh = get_google_sheet()
     if not sh: return
@@ -359,13 +356,20 @@ def save_broker_details_to_project(complex_name, name, email):
         cell = ws.find(complex_name)
         headers = ws.row_values(1)
         
+        # Robust finding of columns
+        name_idx = -1
+        email_idx = -1
+        
         if "Insurance Broker Name" in headers:
-            idx = headers.index("Insurance Broker Name") + 1
-            ws.update_cell(cell.row, idx, name)
-            
+            name_idx = headers.index("Insurance Broker Name") + 1
+        
         if "Insurance Broker Email" in headers:
-            idx = headers.index("Insurance Broker Email") + 1
-            ws.update_cell(cell.row, idx, email)
+            email_idx = headers.index("Insurance Broker Email") + 1
+            
+        if name_idx != -1:
+            ws.update_cell(cell.row, name_idx, name)
+        if email_idx != -1:
+            ws.update_cell(cell.row, email_idx, email)
             
         clear_cache()
     except Exception as e:
@@ -400,7 +404,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- UPDATED: SMART ROW CREATION ---
+# --- SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     if not sh: return "CONNECTION_ERROR"
@@ -1048,6 +1052,7 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
+            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1104,7 +1109,7 @@ def main():
                 
                 # Sort by Heading
                 if 'Task Heading' in agent_view.columns:
-                    # --- NEW HEADINGS ---
+                    # --- UPDATED HEADINGS ORDER ---
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General", "Other"]
                     
                     all_edited_dfs = []
@@ -1644,62 +1649,91 @@ def main():
                     # Just take the first one for convenience or let user type
                     b_name_def = broker_candidates[0]['Provider Name']
                     b_email_def = broker_candidates[0]['Email']
+                
+                # Pre-fill from Saved Project Data if available
+                saved_b_name = str(proj_row.get('Insurance Broker Name', ''))
+                saved_b_email = str(proj_row.get('Insurance Broker Email', ''))
+                
+                if saved_b_name: b_name_def = saved_b_name
+                if saved_b_email: b_email_def = saved_b_email
 
-                b_name = st.text_input("Current Broker Name", value=b_name_def)
-                b_email = st.text_input("Current Broker Email", value=b_email_def)
+                with st.form("broker_details_form"):
+                    b_name = st.text_input("Current Broker Name", value=b_name_def)
+                    b_email = st.text_input("Current Broker Email", value=b_email_def)
+                    
+                    if st.form_submit_button("Save Broker Details"):
+                        save_broker_details_to_project(b_choice, b_name, b_email)
+                        st.success("Broker details saved!")
+                        st.rerun()
             
             c_ins1, c_ins2 = st.columns(2)
             
             # Button 1: External Broker Email
             with c_ins1:
-                if st.button("Draft Broker Appointment Email"):
-                    if b_email:
-                        subj = f"Appointment of Managing Agents: {b_choice}"
-                        body = (f"Dear {b_name},\n\n"
-                                f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
-                                f"effective {take_on_date}.\n\n"
-                                f"We kindly request a copy of the latest insurance policy schedule and a 3-year claims history for our records.\n\n"
-                                f"Going forward, please direct all communication regarding this policy to the Portfolio Manager, "
-                                f"{assigned_manager} ({manager_email}), who is copied on this email.\n\n"
-                                f"Regards,\n{takeon_name}\nPretor Group")
-                        
-                        safe_subj = urllib.parse.quote(subj)
-                        safe_body = urllib.parse.quote(body)
-                        # CC Portfolio Manager
-                        cc_param = f"&cc={manager_email}" if manager_email else ""
-                        
-                        link = f'<a href="mailto:{b_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Broker Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
-                    else:
-                        st.error("Please enter a Broker Email address above.")
+                if broker_email_sent and broker_email_sent != "None" and broker_email_sent != "":
+                    st.success(f"✅ Broker email sent on {broker_email_sent}")
+                    if st.button("Reset Broker Status"):
+                         update_insurance_status(b_choice, "Broker", reset=True)
+                         st.rerun()
+                else:
+                    if st.button("Draft Broker Appointment Email"):
+                        if b_email:
+                            if update_insurance_status(b_choice, "Broker"):
+                                subj = f"Appointment of Managing Agents: {b_choice}"
+                                body = (f"Dear {b_name},\n\n"
+                                        f"Please be advised that Pretor Group has been appointed as managing agents for {b_choice} "
+                                        f"effective {take_on_date}.\n\n"
+                                        f"We kindly request a copy of the latest insurance policy schedule and a 3-year claims history for our records.\n\n"
+                                        f"Going forward, please direct all communication regarding this policy to the Portfolio Manager, "
+                                        f"{assigned_manager} ({manager_email}), who is copied on this email.\n\n"
+                                        f"Regards,\n{takeon_name}\nPretor Group")
+                                
+                                safe_subj = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                # CC Portfolio Manager
+                                cc_param = f"&cc={manager_email}" if manager_email else ""
+                                
+                                link = f'<a href="mailto:{b_email}?subject={safe_subj}&body={safe_body}{cc_param}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Broker Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status Updated! Click link above.")
+                        else:
+                            st.error("Please ensure Broker Email is saved above.")
 
             # Button 2: Internal Insurance Dept Email
             with c_ins2:
-                if st.button("Draft Internal Insurance Email"):
-                    settings_df = get_data("Settings")
-                    ins_email = ""
-                    if not settings_df.empty:
-                        row = settings_df[settings_df['Department'] == 'Insurance']
-                        if not row.empty: ins_email = row.iloc[0]['Email']
-                    
-                    if ins_email:
-                        subj = f"Insurance Quote Request: {b_choice}"
-                        # Folder path construction
-                        folder_path = f"BCD folder -> {assigned_manager} -> {b_choice}"
+                if internal_ins_sent and internal_ins_sent != "None" and internal_ins_sent != "":
+                    st.success(f"✅ Internal email sent on {internal_ins_sent}")
+                    if st.button("Reset Internal Status"):
+                         update_insurance_status(b_choice, "Internal", reset=True)
+                         st.rerun()
+                else:
+                    if st.button("Draft Internal Insurance Email"):
+                        settings_df = get_data("Settings")
+                        ins_email = ""
+                        if not settings_df.empty:
+                            row = settings_df[settings_df['Department'] == 'Insurance']
+                            if not row.empty: ins_email = row.iloc[0]['Email']
                         
-                        body = (f"Dear Insurance Department,\n\n"
-                                f"We have received the latest insurance policy and claims history for {b_choice}.\n\n"
-                                f"These documents have been saved on the server at:\n"
-                                f"📂 {folder_path}\n\n"
-                                f"Please could you review the current policy and provide us with a comparative quotation?\n\n"
-                                f"Regards,\n{takeon_name}")
-                        
-                        safe_subj = urllib.parse.quote(subj)
-                        safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{ins_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Insurance Dept Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
-                    else:
-                        st.error("Insurance Department Email not set in Global Settings.")
+                        if ins_email:
+                            if update_insurance_status(b_choice, "Internal"):
+                                subj = f"Insurance Quote Request: {b_choice}"
+                                # Folder path construction
+                                folder_path = f"BCD folder -> {assigned_manager} -> {b_choice}"
+                                
+                                body = (f"Dear Insurance Department,\n\n"
+                                        f"We have received the latest insurance policy and claims history for {b_choice}.\n\n"
+                                        f"These documents have been saved on the server at:\n"
+                                        f"📂 {folder_path}\n\n"
+                                        f"Please could you review the current policy and provide us with a comparative quotation?\n\n"
+                                        f"Regards,\n{takeon_name}")
+                                
+                                safe_subj = urllib.parse.quote(subj)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{ins_email}?subject={safe_subj}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Insurance Dept Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status Updated! Click link above.")
+                        else:
+                            st.error("Insurance Department Email not set in Global Settings.")
 
             st.divider()
             
