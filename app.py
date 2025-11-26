@@ -53,7 +53,8 @@ def get_data(worksheet_name):
                 if worksheet_name == "Checklist":
                     return pd.DataFrame(columns=["Complex Name", "Task Name", "Received", "Date Received", "Notes", "Responsibility", "Delete", "Completed By", "Task Heading"])
                 if worksheet_name == "Projects":
-                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date"])
+                    # Added "Debt Collection Email Sent Date" to columns
+                    return pd.DataFrame(columns=["Complex Name", "Type", "Previous Agents", "Take On Date", "No of Units", "Mgmt Fees", "Erf No", "SS Number", "CSOS Number", "VAT Number", "Tax Number", "Year End", "Auditor", "Last Audit Year", "Building Code", "Expense Code", "Physical Address", "Assigned Manager", "Date Doc Requested", "Is_Finalized", "Client Email", "Finalized Date", "Agent Name", "Agent Email", "Manager Email", "Assistant Name", "Assistant Email", "Bookkeeper Name", "Bookkeeper Email", "UIF Number", "COIDA Number", "SARS PAYE Number", "TakeOn Name", "TakeOn Email", "Wages Sent Date", "Wages Employee Count", "SARS Sent Date", "Trustee Email Sent Date", "Insurance Broker Name", "Insurance Broker Email", "Broker Email Sent Date", "Internal Ins Email Sent Date", "Debt Collection Email Sent Date"])
                 if worksheet_name == "ServiceProviders":
                     return pd.DataFrame(columns=["Complex Name", "Provider Name", "Service Type", "Email", "Phone", "Date Emailed"])
                 if worksheet_name == "Employees":
@@ -319,6 +320,10 @@ def update_trustee_status(complex_name):
         return False
 
 def update_insurance_status(complex_name, email_type, reset=False):
+    """
+    Updates insurance email status.
+    email_type: 'Broker' or 'Internal'
+    """
     sh = get_google_sheet()
     if not sh: return False
     ws = sh.worksheet("Projects")
@@ -347,7 +352,35 @@ def update_insurance_status(complex_name, email_type, reset=False):
         st.error(f"Error updating Insurance status: {e}")
         return False
 
-# --- NEW: SAVE BROKER DETAILS ---
+# --- NEW: LEGAL STATUS UPDATER ---
+def update_legal_status(complex_name, reset=False):
+    """Updates the Debt Collection Email Sent Date."""
+    sh = get_google_sheet()
+    if not sh: return False
+    ws = sh.worksheet("Projects")
+    try:
+        cell = ws.find(complex_name)
+        row_num = cell.row
+        headers = ws.row_values(1)
+        
+        if "Debt Collection Email Sent Date" not in headers:
+             st.error("Please add 'Debt Collection Email Sent Date' header to Projects tab.")
+             return False
+        
+        col_idx = headers.index("Debt Collection Email Sent Date") + 1
+        
+        if reset:
+            ws.update_cell(row_num, col_idx, "")
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            ws.update_cell(row_num, col_idx, today)
+            
+        clear_cache()
+        return True
+    except Exception as e:
+        st.error(f"Error updating Legal status: {e}")
+        return False
+
 def save_broker_details_to_project(complex_name, name, email):
     sh = get_google_sheet()
     if not sh: return
@@ -404,7 +437,7 @@ def calculate_financial_periods(take_on_date_str, year_end_str):
     except Exception as e:
         return "Current Financial Year Records", "Past 5 Financial Years", "Latest Bank Statements"
 
-# --- SMART ROW CREATION ---
+# --- UPDATED: SMART ROW CREATION ---
 def create_new_building(data_dict):
     sh = get_google_sheet()
     if not sh: return "CONNECTION_ERROR"
@@ -456,7 +489,8 @@ def create_new_building(data_dict):
         "Insurance Broker Name": ["Insurance Broker Name"],
         "Insurance Broker Email": ["Insurance Broker Email"],
         "Broker Email Sent Date": ["Broker Email Sent Date"],
-        "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"]
+        "Internal Ins Email Sent Date": ["Internal Ins Email Sent Date"],
+        "Debt Collection Email Sent Date": ["Debt Collection Email Sent Date"]
     }
 
     for i, header in enumerate(headers):
@@ -770,10 +804,8 @@ def generate_weekly_report_pdf(summary_list):
 # --- MAIN APP ---
 def main():
     st.set_page_config(page_title="Pretor Group Take-On", layout="wide")
-    
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
-        
     st.title("🏢 Pretor Group: Take-On Manager")
 
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
@@ -919,6 +951,7 @@ def main():
                         "Bookkeeper Email": book_email, "Date Doc Requested": date_req,
                         "TakeOn Name": takeon_name, "TakeOn Email": takeon_email
                     }
+                    # Removed the second argument (has_arrears) as it was deleted in previous step
                     result = create_new_building(data)
                     if result == "SUCCESS":
                         st.success(f"Created {complex_name}!")
@@ -962,6 +995,7 @@ def main():
             internal_ins_sent = str(proj_row.get('Internal Ins Email Sent Date', ''))
             broker_name_saved = str(proj_row.get('Insurance Broker Name', ''))
             broker_email_saved = str(proj_row.get('Insurance Broker Email', ''))
+            legal_sent_date = str(proj_row.get('Debt Collection Email Sent Date', ''))
 
             cc_list = []
             if manager_email and manager_email != "None" and manager_email != takeon_email: cc_list.append(manager_email)
@@ -1052,7 +1086,6 @@ def main():
             else:
                 employees_df = pd.DataFrame()
             
-            # NEW: Load Arrears Data
             all_arrears = get_data("Arrears")
             if not all_arrears.empty:
                 arrears_df = all_arrears[all_arrears['Complex Name'] == b_choice].copy()
@@ -1592,36 +1625,44 @@ def main():
             if not arrears_df.empty:
                 st.dataframe(arrears_df[["Unit Number", "Outstanding Amount", "Attorney Name", "Attorney Email", "Attorney Phone"]], hide_index=True)
                 
-                if st.button("Draft Debt Collection Email"):
-                    settings_df = get_data("Settings")
-                    dc_email = ""
-                    if not settings_df.empty:
-                        row = settings_df[settings_df['Department'] == 'Debt Collection']
-                        if not row.empty: dc_email = row.iloc[0]['Email']
-                    
-                    if dc_email:
-                        subject = f"Arrears Handover: {b_choice}"
-                        body = (f"Dear Debt Collection Department,\n\n"
-                                f"Please find below the list of units in arrears for the new complex: {b_choice}.\n\n")
+                if legal_sent_date and legal_sent_date != "None" and legal_sent_date != "":
+                    st.success(f"✅ Legal handover sent on {legal_sent_date}")
+                    if st.button("Reset Legal Status"):
+                        update_legal_status(b_choice, reset=True)
+                        st.rerun()
+                else:
+                    if st.button("Draft Debt Collection Email"):
+                        settings_df = get_data("Settings")
+                        dc_email = ""
+                        if not settings_df.empty:
+                            row = settings_df[settings_df['Department'] == 'Debt Collection']
+                            if not row.empty: dc_email = row.iloc[0]['Email']
                         
-                        for _, row in arrears_df.iterrows():
-                            u = row['Unit Number']
-                            amt = row['Outstanding Amount']
-                            att_name = row['Attorney Name']
-                            att_email = row['Attorney Email']
-                            att_phone = row['Attorney Phone']
-                            
-                            att_info_str = f"{att_name} (Email: {att_email}, Phone: {att_phone})" if att_name else "None"
-                            body += f"- Unit {u}: R{amt} (Attorney: {att_info_str})\n"
-                            
-                        body += f"\nRegards,\n{takeon_name}\nPretor Group"
-                        
-                        safe_subject = urllib.parse.quote(subject)
-                        safe_body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{dc_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Debt Collection Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
-                    else:
-                        st.error("Debt Collection Email not set in Global Settings.")
+                        if dc_email:
+                            if update_legal_status(b_choice):
+                                subject = f"Arrears Handover: {b_choice}"
+                                body = (f"Dear Debt Collection Department,\n\n"
+                                        f"Please find below the list of units in arrears for the new complex: {b_choice}.\n\n")
+                                
+                                for _, row in arrears_df.iterrows():
+                                    u = row['Unit Number']
+                                    amt = row['Outstanding Amount']
+                                    att_name = row['Attorney Name']
+                                    att_email = row['Attorney Email']
+                                    att_phone = row['Attorney Phone']
+                                    
+                                    att_info_str = f"{att_name} (Email: {att_email}, Phone: {att_phone})" if att_name else "None"
+                                    body += f"- Unit {u}: R{amt} (Attorney: {att_info_str})\n"
+                                    
+                                body += f"\nRegards,\n{takeon_name}\nPretor Group"
+                                
+                                safe_subject = urllib.parse.quote(subject)
+                                safe_body = urllib.parse.quote(body)
+                                link = f'<a href="mailto:{dc_email}?subject={safe_subject}&body={safe_body}" target="_blank" style="background-color:#FF4B4B; color:white; padding:10px; text-decoration:none; border-radius:5px;">📧 Open Debt Collection Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                                st.success("Status updated! Click link above.")
+                        else:
+                            st.error("Debt Collection Email not set in Global Settings.")
             else:
                 st.caption("No arrears records loaded.")
             
@@ -1745,28 +1786,55 @@ def main():
             with col1:
                 st.subheader("Client Update")
                 if st.button("Draft Client Email"):
-                    body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n⚠️ OUTSTANDING:\n"
+                    body = f"Dear Client,\n\nProgress Update for {b_choice}:\n\n"
+                    
+                    # --- NEW: DETAILED STATUS SECTION ---
+                    body += "📋 ITEMS ATTENDED TO / IN PROGRESS:\n"
+                    
+                    # Insurance Status
+                    ins_status = "Pending"
+                    if broker_email_sent: ins_status = f"Broker notified ({broker_email_sent})"
+                    if internal_ins_sent: ins_status += f", Internal Quote requested ({internal_ins_sent})"
+                    body += f"- Insurance: {ins_status}\n"
+                    
+                    # Employee Status
+                    emp_status = f"{len(employees_df)} loaded"
+                    if wages_sent_date: emp_status += f", Wages Dept notified ({wages_sent_date})"
+                    else: emp_status += ", Wages Dept pending"
+                    body += f"- Employees: {emp_status}\n"
+
+                    # Council Status
+                    body += f"- City Council: {len(council_df)} accounts loaded.\n"
+
+                    # Service Providers
+                    prov_emailed = len(providers_df[providers_df['Date Emailed'] != ''])
+                    body += f"- Service Providers: {len(providers_df)} loaded. {prov_emailed} appointment emails sent.\n"
+
+                    # SARS
+                    sars_stat = f"Tax Number: {tax_number}" if tax_number else "Pending Tax Number"
+                    if sars_sent_date: sars_stat += f", Dept Notified ({sars_sent_date})"
+                    body += f"- SARS: {sars_stat}\n"
+                    
+                    # Legal
+                    leg_stat = f"{len(arrears_df)} matters loaded"
+                    if legal_sent_date: leg_stat += f", Debt Collection Notified ({legal_sent_date})"
+                    body += f"- Legal/Arrears: {leg_stat}\n\n"
+                    
+                    # --- EXISTING SECTIONS ---
+                    body += "⚠️ OUTSTANDING ITEMS:\n"
                     if pending_df.empty: body += "- None\n"
                     else:
                         for _, row in pending_df.iterrows():
                             note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                             body += f"- {row['Task Name']} (Action: {row['Responsibility']}){note_text}\n"
-                    body += "\n✅ RECEIVED:\n"
+                    
+                    body += "\n✅ RECEIVED ITEMS:\n"
                     for _, row in completed_df.iterrows():
                         note_text = f" -- (Note: {row['Notes']})" if row['Notes'] else ""
                         body += f"- {row['Task Name']} (Date: {row['Date Received']}){note_text}\n"
-                    body += "\n📋 SERVICE PROVIDERS STATUS:\n"
-                    if providers_df.empty:
-                        body += "- None loaded yet\n"
-                    else:
-                        for _, row in providers_df.iterrows():
-                            name = row['Provider Name']
-                            service = row['Service Type']
-                            date_sent = str(row['Date Emailed'])
-                            status = f"✅ Notified ({date_sent})" if (date_sent and date_sent != "None") else "⚠️ Pending Notification"
-                            body += f"- {service}: {name} [{status}]\n"
 
                     body += f"\nRegards,\n{takeon_name}\nPretor Group"
+                    
                     safe_subject = urllib.parse.quote(f"Progress Update: {b_choice}")
                     safe_body = urllib.parse.quote(body)
                     safe_emails = client_email.replace(";", ",")
