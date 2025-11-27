@@ -259,27 +259,35 @@ def main():
                 st.divider()
 
                 # B. Staff List
-                st.markdown("#### 👥 Employee List")
+                st.markdown("#### 👥 Employee List (Read-Only)")
+                
+                # 1. Get data
                 all_staff = get_data("Employees")
+                
+                # 2. Filter for current complex
                 if not all_staff.empty:
                     current_staff = all_staff[all_staff['Complex Name'] == b_choice].copy()
                 else:
                     current_staff = pd.DataFrame()
 
+                # 3. Display
                 if not current_staff.empty:
-                    # Clean up booleans for display
+                    # Clean up booleans for display (Convert 'true'/'false' strings to actual Booleans)
                     for col in ['Payslip Received', 'Contract Received', 'Tax Ref Received']:
                         if col in current_staff.columns:
                             current_staff[col] = current_staff[col].apply(lambda x: True if str(x).lower() == 'true' else False)
 
+                    # We use st.dataframe (which is view-only) NOT st.data_editor
                     st.dataframe(
                         current_staff[['Name', 'Surname', 'ID Number', 'Position', 'Salary', 'Payslip Received', 'Contract Received', 'Tax Ref Received']],
                         hide_index=True,
+                        use_container_width=True,
                         column_config={
+                            "Salary": st.column_config.NumberColumn(format="R %.2f"),
+                            # Explicitly disable these checkboxes so they cannot be clicked
                             "Payslip Received": st.column_config.CheckboxColumn("Payslip", disabled=True),
                             "Contract Received": st.column_config.CheckboxColumn("Contract", disabled=True),
-                            "Tax Ref Received": st.column_config.CheckboxColumn("Tax Ref", disabled=True),
-                            "Salary": st.column_config.NumberColumn(format="R %.2f")
+                            "Tax Ref Received": st.column_config.CheckboxColumn("Tax Ref", disabled=True)
                         }
                     )
                 else:
@@ -460,6 +468,7 @@ def main():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
+
 
 
 
