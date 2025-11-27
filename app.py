@@ -456,7 +456,7 @@ def main():
                             st.rerun()
                 st.divider()
 
-                # 2. CUSTOM COUNCIL SECTION (Single Header, Table + Email)
+                # 2. CUSTOM COUNCIL SECTION
                 st.markdown("#### Council")
                 
                 # Fetch Council Data
@@ -464,7 +464,6 @@ def main():
                 
                 # --- AUTO-FIX COLUMN NAMES (Normalize Supabase to UI expectation) ---
                 if not council_data.empty:
-                    # Rename snake_case to Title Case if needed
                     rename_map = {
                         'complex_name': 'Complex Name',
                         'account_number': 'Account Number',
@@ -486,7 +485,6 @@ def main():
                         # Editable Grid
                         st.caption("📝 Edit Account Details Below:")
                         c_cols = ['id', 'Account Number', 'Service', 'Balance']
-                        # Ensure columns exist before display
                         c_cols = [c for c in c_cols if c in curr_council.columns]
                         
                         edited_council = st.data_editor(
@@ -606,13 +604,30 @@ def main():
                 st.markdown("**External Broker**")
                 broker_email = get_val("Insurance Broker Email")
                 b_date = get_val("Broker Email Sent Date")
+                
                 if b_date and b_date != "None":
                     st.success(f"Sent: {b_date}")
                 else:
                     if broker_email:
+                        pm_name = get_val("Assigned Manager")
+                        pm_email = get_val("Manager Email")
+                        
+                        broker_body = f"Dear Broker,\n\nPlease take note that Pretor Group has been appointed as the managing agents for {b_choice}.\n\n"
+                        broker_body += "We kindly request the following documents for our records:\n"
+                        broker_body += "1. The latest Insurance Policy Schedule.\n"
+                        broker_body += "2. A 3-year Claims History.\n\n"
+                        broker_body += "Please note that all future communication regarding the insurance should be directed to the appointed Portfolio Manager:\n"
+                        broker_body += f"Name: {pm_name}\nEmail: {pm_email}\n\n"
+                        broker_body += "Regards,\nPretor Take-On Team"
+
                         subj = urllib.parse.quote(f"Insurance Appointment: {b_choice}")
-                        lnk = f'<a href="mailto:{broker_email}?subject={subj}" style="margin-right:15px;">📧 Draft Broker Email</a>'
+                        bod = urllib.parse.quote(broker_body)
+                        
+                        lnk = f'<a href="mailto:{broker_email}?subject={subj}&body={bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Broker Email</a>'
                         st.markdown(lnk, unsafe_allow_html=True)
+                    else:
+                        st.warning("⚠️ No Broker Email Loaded")
+
                     if st.button("Mark Broker Sent"): 
                         update_email_status(b_choice, "Broker Email Sent Date")
                         st.cache_data.clear()
