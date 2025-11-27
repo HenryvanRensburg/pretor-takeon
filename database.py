@@ -1,25 +1,37 @@
-import os
+iimport os
 import pandas as pd
 import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
 
-# --- INITIALIZE SUPABASE ---
-# 1. Try loading from Streamlit Secrets (Best for Streamlit Cloud)
+# --- INITIALIZE SUPABASE CONNECTION ---
+# This block prioritizes Streamlit Secrets (for Cloud) but falls back to OS Env (for Local)
 try:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
+    # Option 1: Streamlit Cloud Secrets
+    if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+    else:
+        # Trigger error if keys are missing in secrets
+        raise KeyError("Keys not found in st.secrets")
 except (FileNotFoundError, KeyError):
-    # 2. Fallback to Environment Variables (Best for Local/Docker)
+    # Option 2: Local Environment Variables (Fallback)
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
 
-# 3. Final Check
+# Final Validation
 if not url or not key:
-    st.error("🚨 Supabase Credentials Missing! Please set SUPABASE_URL and SUPABASE_KEY in .streamlit/secrets.toml")
+    st.error("🚨 **Connection Error:** Supabase URL and Key are missing.")
+    st.info("If you are on Streamlit Cloud, go to **Settings > Secrets** and add them.")
     st.stop()
 
-supabase: Client = create_client(url, key)
+# Create the client
+try:
+    supabase: Client = create_client(url, key)
+except Exception as e:
+    st.error(f"Failed to connect to Supabase: {e}")
+    st.stop()
+
 
 # --- GENERIC FETCH ---
 def get_data(table_name):
@@ -29,6 +41,7 @@ def get_data(table_name):
         data = response.data
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e:
+        # Don't crash the app on empty tables, just print error to logs
         print(f"Error fetching {table_name}: {e}")
         return pd.DataFrame()
 
@@ -36,7 +49,6 @@ def get_data(table_name):
 def create_new_building(data):
     """Creates a new project if it doesn't exist."""
     try:
-        # Check for duplicates
         existing = supabase.table("Projects").select("*").eq("Complex Name", data["Complex Name"]).execute()
         if existing.data:
             return "EXISTS"
@@ -75,7 +87,7 @@ def finalize_project_db(complex_name):
 
 # --- EMPLOYEES / STAFF ---
 def add_employee(complex_name, name, surname, id_num, position, salary, payslip_bool, contract_bool, tax_ref_bool):
-    """Adds a new employee with specific document flags."""
+    """Adds a new employee."""
     data = {
         "Complex Name": complex_name,
         "Name": name,
@@ -196,7 +208,7 @@ def save_global_settings(settings_dict):
     except Exception as e:
         print(e)
 
-# --- MISC / PLACEHOLDERS ---
+# --- PLACEHOLDERS (Required to prevent ImportErrors in app.py) ---
 def add_service_provider(name, type, contact):
     pass 
 
