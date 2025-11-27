@@ -154,26 +154,92 @@ def main():
 
             # --- SUB SECTION 1: OVERVIEW ---
             if sub_nav == "Overview":
-                with st.expander("Edit Details"):
-                    with st.form("edit_det"):
-                        nm = st.text_input("Manager", value=get_val("Assigned Manager"))
-                        em = st.text_input("Email", value=get_val("Manager Email"))
-                        if st.form_submit_button("Update"):
-                            update_building_details_batch(b_choice, {"Assigned Manager": nm, "Manager Email": em})
-                            st.cache_data.clear()
-                            st.success("Updated")
-                            st.rerun()
+                st.subheader(f"Project Overview: {b_choice}")
                 
+                # We use a form to capture missing details
+                with st.form("project_overview_form"):
+                    st.markdown("#### 📝 Building Details")
+                    st.caption("Fields with existing data are locked 🔒. Please fill in any missing details.")
+                    
+                    # Helper function to generate an input that is locked if data exists
+                    def smart_input(label, col_name, col_obj=st):
+                        # Get current value safely
+                        curr_val = str(p_row.get(col_name, ''))
+                        
+                        # Check if it has real data (ignoring 'None', 'nan', empty strings)
+                        has_data = curr_val and curr_val.lower() not in ["none", "nan", ""]
+                        
+                        # Render input
+                        # We use key=f"ov_{col_name}" to avoid clashes with other widgets
+                        return col_obj.text_input(
+                            label, 
+                            value=curr_val if has_data else "", 
+                            disabled=has_data, # LOCK if data exists
+                            key=f"ov_{col_name}",
+                            placeholder="Enter missing detail..."
+                        )
+
+                    # Layout: 3 Columns for a clean look
+                    c1, c2, c3 = st.columns(3)
+                    
+                    with c1:
+                        # Critical Info
+                        u_code = smart_input("Building Code", "Building Code", c1)
+                        u_type = smart_input("Type (BC/HOA)", "Type", c1)
+                        u_units = smart_input("No of Units", "No of Units", c1)
+                    
+                    with c2:
+                        # Financial / Dates
+                        u_ye = smart_input("Year End", "Year End", c2)
+                        u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c2)
+                        u_tod = smart_input("Take On Date", "Take On Date", c2)
+                    
+                    with c3:
+                        # People
+                        u_man = smart_input("Portfolio Manager", "Assigned Manager", c3)
+                        u_mail = smart_input("Manager Email", "Manager Email", c3)
+                        u_tom = smart_input("Take-On Manager", "TakeOn Name", c3)
+
+                    st.markdown("---")
+                    
+                    # Submit Button
+                    if st.form_submit_button("💾 Save Missing Details"):
+                        # Gather all values (Streamlit returns the value even if the input is disabled)
+                        updates = {
+                            "Building Code": u_code,
+                            "Type": u_type,
+                            "No of Units": u_units,
+                            "Year End": u_ye,
+                            "Mgmt Fees": u_fees,
+                            "Take On Date": u_tod,
+                            "Assigned Manager": u_man,
+                            "Manager Email": u_mail,
+                            "TakeOn Name": u_tom
+                        }
+                        
+                        # Send to Supabase
+                        update_building_details_batch(b_choice, updates)
+                        
+                        # Clear cache and reload so the new fields become locked
+                        st.cache_data.clear()
+                        st.success("Project details updated.")
+                        st.rerun()
+
+                # Previous Agent Section
                 st.markdown("### Previous Agent Request")
                 c1, c2 = st.columns(2)
                 an = c1.text_input("Agent Name", value=get_val("Agent Name"))
                 ae = c2.text_input("Agent Email", value=get_val("Agent Email"))
+                
                 if st.button("Generate Request PDF"):
                     update_project_agent_details(b_choice, an, ae)
                     st.cache_data.clear()
+                    
                     items = get_data("Checklist")
                     req_items = items[(items['Complex Name'] == b_choice) & (items['Responsibility'] != 'Pretor Group')]
+                    
                     pdf = generate_appointment_pdf(b_choice, req_items, an, get_val("Take On Date"), get_val("Year End"), get_val("Building Code"))
+                    
                     with open(pdf, "rb") as f:
                         st.download_button("Download PDF", f, file_name=pdf)
 
@@ -482,3 +548,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
