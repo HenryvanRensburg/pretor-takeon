@@ -141,7 +141,6 @@ def main():
 
             # REPLACE TABS WITH PERSISTENT NAVIGATION
             st.divider()
-            # This radio button persists its selection even after st.rerun()
             sub_nav = st.radio(
                 "Section Navigation", 
                 ["Overview", "Progress Tracker", "Staff Details", "Department Handovers"], 
@@ -390,4 +389,78 @@ def main():
                     st.success(f"Sent: {b_date}")
                 else:
                     if broker_email:
-                        subj = urllib.parse.quote(f"Insurance Appointment: {b_
+                        subj = urllib.parse.quote(f"Insurance Appointment: {b_choice}")
+                        lnk = f'<a href="mailto:{broker_email}?subject={subj}" style="margin-right:15px;">📧 Draft Broker Email</a>'
+                        st.markdown(lnk, unsafe_allow_html=True)
+                    if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.rerun()
+                
+                st.markdown("**Internal Insurance Dept**")
+                render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
+
+                # 4. Wages
+                wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
+                wages_body += "--- PROJECT STATUTORY NUMBERS ---\n"
+                wages_body += f"UIF: {get_val('UIF Number')}\nPAYE: {get_val('PAYE Number')}\nCOIDA: {get_val('COIDA Number')}\n\n"
+                wages_body += "--- STAFF DETAILS ---\n"
+                
+                all_staff_email = get_data("Employees")
+                if not all_staff_email.empty:
+                    c_staff = all_staff_email[all_staff_email['Complex Name'] == b_choice]
+                    if not c_staff.empty:
+                        for _, emp in c_staff.iterrows():
+                            has_pay = "YES" if str(emp.get('Payslip Received', False)).lower() == 'true' else "NO"
+                            has_con = "YES" if str(emp.get('Contract Received', False)).lower() == 'true' else "NO"
+                            has_tax = "YES" if str(emp.get('Tax Ref Received', False)).lower() == 'true' else "NO"
+                            
+                            wages_body += f"Employee: {emp.get('Name','')} {emp.get('Surname','')}\n"
+                            wages_body += f"ID: {emp.get('ID Number','')}\n"
+                            wages_body += f"Position: {emp.get('Position','')} | Salary: R{emp.get('Salary', 0)}\n"
+                            wages_body += f"[Docs: Payslip:{has_pay} | Contract:{has_con} | TaxRef:{has_tax}]\n\n"
+                    else:
+                        wages_body += "(No staff loaded on system)\n"
+                else:
+                    wages_body += "(No staff loaded on system)\n"
+                
+                wages_body += "Regards,\nPretor Take-On Team"
+                
+                render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
+
+                # 5. Debt Collection
+                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
+
+                # 6. Accounts
+                render_handover_section("Accounts", "Accounts Sent Date", "Accounts")
+
+                # 7. Fee Confirmation
+                st.markdown("#### Fee Confirmation")
+                pm_email = get_val("Manager Email")
+                fee_body = f"Please confirm the management fees for {b_choice}.\n\nAgreed Fees: {get_val('Mgmt Fees')}"
+                
+                f_date = get_val("Fee Confirmation Email Sent Date")
+                if f_date and f_date != "None":
+                    st.success(f"Sent: {f_date}")
+                else:
+                    col_f1, col_f2 = st.columns([1,1])
+                    with col_f1:
+                        if pm_email:
+                            s_fee = urllib.parse.quote(f"Fee Confirmation: {b_choice}")
+                            b_fee = urllib.parse.quote(fee_body)
+                            l_fee = f'<a href="mailto:{pm_email}?subject={s_fee}&body={b_fee}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Fee Email</a>'
+                            st.markdown(l_fee, unsafe_allow_html=True)
+                    with col_f2:
+                        if st.button("Mark Fee Email Sent"): 
+                            update_email_status(b_choice, "Fee Confirmation Email Sent Date")
+                            st.rerun()
+
+                st.divider()
+
+                # 8. Finalize
+                st.markdown("### 🏁 Final Actions")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Finalize Project"):
+                        finalize_project_db(b_choice)
+                        st.balloons()
+
+if __name__ == "__main__":
+    main()
