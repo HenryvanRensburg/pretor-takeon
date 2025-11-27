@@ -459,12 +459,26 @@ def main():
                 # 2. CUSTOM COUNCIL SECTION (Single Header, Table + Email)
                 st.markdown("#### Council")
                 
-                # A. List Accounts
+                # Fetch Council Data
                 council_data = get_data("Council")
                 
-                # Prepare email body while checking data
+                # --- AUTO-FIX COLUMN NAMES (Normalize Supabase to UI expectation) ---
+                if not council_data.empty:
+                    # Rename snake_case to Title Case if needed
+                    rename_map = {
+                        'complex_name': 'Complex Name',
+                        'account_number': 'Account Number',
+                        'service': 'Service',
+                        'balance': 'Balance',
+                        'Complex_Name': 'Complex Name',
+                        'Account_Number': 'Account Number'
+                    }
+                    council_data.rename(columns=rename_map, inplace=True)
+                
+                # Prepare email body
                 c_body_str = f"Dear Council Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
 
+                # Filter and Display
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     
@@ -472,6 +486,7 @@ def main():
                         # Editable Grid
                         st.caption("📝 Edit Account Details Below:")
                         c_cols = ['id', 'Account Number', 'Service', 'Balance']
+                        # Ensure columns exist before display
                         c_cols = [c for c in c_cols if c in curr_council.columns]
                         
                         edited_council = st.data_editor(
@@ -503,7 +518,7 @@ def main():
                 
                 c_body_str += "\nRegards,\nPretor Take-On Team"
 
-                # B. Add New Account Form
+                # Add New Account Form
                 with st.expander("➕ Add New Council Account", expanded=False):
                     with st.form("add_c_form", clear_on_submit=True):
                         c1, c2, c3 = st.columns(3)
@@ -517,7 +532,7 @@ def main():
                             st.success("Added")
                             st.rerun()
 
-                # C. Email Section (Manual Render for Custom Layout)
+                # Email Section
                 st.markdown("**Council Department Handover Status**")
                 muni_email = s_dict.get("Municipal", "")
                 c_sent_date = get_val("Council Email Sent Date")
