@@ -5,7 +5,7 @@ from database import (
     add_council_account, add_trustee, delete_record_by_match, save_global_settings, 
     update_building_details_batch, create_new_building, update_project_agent_details, 
     save_checklist_batch, finalize_project_db, save_broker_details, update_email_status, 
-    update_service_provider_date, update_wages_status
+    update_service_provider_date, update_wages_status, update_employee_batch
 )
 from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
@@ -211,116 +211,7 @@ def main():
                         st.success("Saved!")
                         st.rerun()
 
-            # --- TAB 3: STAFF DETAILS (LOCKED VERSION) ---
-            with tab3:
-                st.subheader(f"Staff Management: {b_choice}")
-                
-                # A. Statutory Numbers (Project Level)
-                st.markdown("#### 🏢 Project Statutory Numbers")
-                
-                # 1. Get current values
-                uif_val = get_val("UIF Number")
-                paye_val = get_val("PAYE Number")
-                coida_val = get_val("COIDA Number")
-
-                # 2. Check if data exists (Handle "None", "nan", or empty strings)
-                def is_filled(val):
-                    return val and str(val).lower() not in ["none", "nan", ""]
-
-                # If ANY of these have data, we treat the section as locked
-                # (You can change 'or' to 'and' if you only want to lock when ALL are full)
-                locked = is_filled(uif_val) or is_filled(paye_val) or is_filled(coida_val)
-
-                if locked:
-                    st.success("🔒 Statutory details are locked and cannot be edited.")
-                    # Display as disabled inputs so they can be read but not changed
-                    c1, c2, c3 = st.columns(3)
-                    c1.text_input("UIF Number", value=uif_val, disabled=True, key="uif_lock")
-                    c2.text_input("PAYE Number", value=paye_val, disabled=True, key="paye_lock")
-                    c3.text_input("COIDA / Workmens Comp", value=coida_val, disabled=True, key="coida_lock")
-                else:
-                    # Display Editable Form
-                    st.info("ℹ️ Please enter these details carefully. Once saved, they will be locked.")
-                    with st.form("stat_nums"):
-                        c1, c2, c3 = st.columns(3)
-                        uif_n = c1.text_input("UIF Number", value=uif_val)
-                        paye_n = c2.text_input("PAYE Number", value=paye_val)
-                        coida_n = c3.text_input("COIDA / Workmens Comp", value=coida_val)
-                        
-                        if st.form_submit_button("💾 Save & Lock Statutory Numbers"):
-                            update_building_details_batch(b_choice, {
-                                "UIF Number": uif_n,
-                                "PAYE Number": paye_n,
-                                "COIDA Number": coida_n
-                            })
-                            st.success("Statutory details saved and locked.")
-                            st.rerun()
-
-                st.divider()
-
-                # B. Staff List
-                st.markdown("#### 👥 Employee List (Read-Only)")
-                
-                # 1. Get data
-                all_staff = get_data("Employees")
-                
-                # 2. Filter for current complex
-                if not all_staff.empty:
-                    current_staff = all_staff[all_staff['Complex Name'] == b_choice].copy()
-                else:
-                    current_staff = pd.DataFrame()
-
-                # 3. Display
-                if not current_staff.empty:
-                    # Clean up booleans for display (Convert 'true'/'false' strings to actual Booleans)
-                    for col in ['Payslip Received', 'Contract Received', 'Tax Ref Received']:
-                        if col in current_staff.columns:
-                            current_staff[col] = current_staff[col].apply(lambda x: True if str(x).lower() == 'true' else False)
-
-                    # We use st.dataframe (which is view-only) NOT st.data_editor
-                    st.dataframe(
-                        current_staff[['Name', 'Surname', 'ID Number', 'Position', 'Salary', 'Payslip Received', 'Contract Received', 'Tax Ref Received']],
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Salary": st.column_config.NumberColumn(format="R %.2f"),
-                            # Explicitly disable these checkboxes so they cannot be clicked
-                            "Payslip Received": st.column_config.CheckboxColumn("Payslip", disabled=True),
-                            "Contract Received": st.column_config.CheckboxColumn("Contract", disabled=True),
-                            "Tax Ref Received": st.column_config.CheckboxColumn("Tax Ref", disabled=True)
-                        }
-                    )
-                else:
-                    st.info("No staff loaded yet.")
-
-                st.divider()
-
-                # C. Add New Employee Form
-                st.markdown("#### ➕ Add New Employee")
-                with st.form("add_emp"):
-                    c1, c2, c3 = st.columns(3)
-                    e_name = c1.text_input("Name")
-                    e_sur = c2.text_input("Surname")
-                    e_id = c3.text_input("ID Number")
-
-                    c4, c5 = st.columns(2)
-                    e_pos = c4.text_input("Position")
-                    e_sal = c5.number_input("Gross Salary", min_value=0.0)
-                    
-                    st.markdown("**Documents Received:**")
-                    col_a, col_b, col_c = st.columns(3)
-                    chk_pay = col_a.checkbox("Latest Payslip")
-                    chk_con = col_b.checkbox("Employment Contract")
-                    chk_tax = col_c.checkbox("Indiv Tax Number")
-                    
-                    if st.form_submit_button("Add Employee"):
-                        if e_name and e_sur and e_id:
-                            # Verify your database.py add_employee function matches this signature
-                            add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
-                            st.success("Employee Added")
-                            st.rerun()
-                        else:
-                            st.error("Name, Surname and ID are required.")
+            v
             # --- TAB 4: DEPARTMENT HANDOVERS ---
             with tab4:
                 st.markdown("### Department Handovers")
@@ -468,6 +359,7 @@ def main():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
+
 
 
 
