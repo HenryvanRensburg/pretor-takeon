@@ -13,7 +13,6 @@ from datetime import datetime
 import os
 
 # --- PAGE CONFIG ---
-# This must remain outside main() as the very first command
 st.set_page_config(page_title="Pretor Take-On", layout="wide")
 
 def main():
@@ -39,11 +38,9 @@ def main():
                     total, received = 0, 0
                 else:
                     c_items = checklist[checklist['Complex Name'] == c_name]
-                    # Ensure boolean comparison is safe
                     valid = c_items[c_items['Delete'] != True] 
                     pretor = valid[valid['Responsibility'].isin(['Pretor Group', 'Both'])]
                     total = len(pretor)
-                    # Check for explicit True (handling Supabase bools or string 'True')
                     received = len(pretor[pretor['Received'].apply(lambda x: str(x).lower() == 'true')])
                 
                 progress_val = (received / total) if total > 0 else 0
@@ -105,17 +102,14 @@ def main():
             name = c1.text_input("Complex Name")
             b_type = c2.selectbox("Type", ["Body Corporate", "HOA"])
             
-            # Basic Fields
             c3, c4 = st.columns(2)
             tod = c3.date_input("Take On Date", datetime.today())
             units = c4.number_input("Units", min_value=1)
             
-            # Team
             c5, c6 = st.columns(2)
             tom = c5.text_input("Take-On Manager", "Henry Janse van Rensburg")
             pm = c6.text_input("Portfolio Manager")
             
-            # Financials
             c7, c8, c9 = st.columns(3)
             ye = c7.text_input("Year End")
             fees = c8.text_input("Mgmt Fees")
@@ -143,7 +137,6 @@ def main():
             b_choice = st.selectbox("Select Complex", projs['Complex Name'])
             p_row = projs[projs['Complex Name'] == b_choice].iloc[0]
             
-            # Helper to get field safely
             def get_val(col): return str(p_row.get(col, ''))
 
             # TABS
@@ -187,12 +180,10 @@ def main():
                         df_view = c_items
                         cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                     
-                    # Ensure bools
                     df_view['Received'] = df_view['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
                     if 'Delete' in df_view.columns:
                          df_view['Delete'] = df_view['Delete'].apply(lambda x: True if str(x).lower() == 'true' else False)
                     
-                    # Sorter
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
                     df_view['Sort'] = df_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                     df_view = df_view.sort_values(by=['Sort', 'Task Name'])
@@ -210,6 +201,120 @@ def main():
                         save_checklist_batch(b_choice, edited)
                         st.success("Saved!")
                         st.rerun()
+
+            # --- TAB 3: STAFF DETAILS (Editable & Auto-Clear) ---
+            with tab3:
+                st.subheader(f"Staff Management: {b_choice}")
+                
+                # A. Statutory Numbers (Project Level)
+                st.markdown("#### 🏢 Project Statutory Numbers")
+                uif_val = get_val("UIF Number")
+                paye_val = get_val("PAYE Number")
+                coida_val = get_val("COIDA Number")
+
+                def is_filled(val):
+                    return val and str(val).lower() not in ["none", "nan", ""]
+
+                locked = is_filled(uif_val) or is_filled(paye_val) or is_filled(coida_val)
+
+                if locked:
+                    st.success("🔒 Statutory details are locked.")
+                    c1, c2, c3 = st.columns(3)
+                    c1.text_input("UIF Number", value=uif_val, disabled=True, key="uif_lock")
+                    c2.text_input("PAYE Number", value=paye_val, disabled=True, key="paye_lock")
+                    c3.text_input("COIDA / Workmens Comp", value=coida_val, disabled=True, key="coida_lock")
+                else:
+                    st.info("ℹ️ Enter carefully. Once saved, these will be locked.")
+                    with st.form("stat_nums"):
+                        c1, c2, c3 = st.columns(3)
+                        uif_n = c1.text_input("UIF Number", value=uif_val)
+                        paye_n = c2.text_input("PAYE Number", value=paye_val)
+                        coida_n = c3.text_input("COIDA / Workmens Comp", value=coida_val)
+                        
+                        if st.form_submit_button("💾 Save & Lock"):
+                            update_building_details_batch(b_choice, {
+                                "UIF Number": uif_n, "PAYE Number": paye_n, "COIDA Number": coida_n
+                            })
+                            st.success("Saved and locked.")
+                            st.rerun()
+
+                st.divider()
+
+                # B. Staff List (EDITABLE)
+                st.markdown("#### 👥 Employee List (Editable)")
+                all_staff = get_data("Employees")
+                if not all_staff.empty:
+                    current_staff = all_staff[all_staff['Complex Name'] == b_choice].copy()
+                else:
+                    current_staff = pd.DataFrame()
+
+                if not current_staff.empty:
+                    for col in ['Payslip Received', 'Contract Received', 'Tax Ref Received']:
+                        if col in current_staff.columns:
+                            current_staff[col] = current_staff[col].apply(lambda x: True if str(x).lower() == 'true' else False)
+
+                    display_cols = ['id', 'Name', 'Surname', 'ID Number', 'Position', 'Salary', 'Payslip Received', 'Contract Received', 'Tax Ref Received']
+                    display_cols = [c for c in display_cols if c in current_staff.columns]
+
+                    edited_df = st.data_editor(
+                        current_staff[display_cols],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "id": st.column_config.Column(disabled=True, width="small"),
+                            "Salary": st.column_config.NumberColumn(format="R %.2f"),
+                            "Payslip Received": st.column_config.CheckboxColumn("Payslip"),
+                            "Contract Received": st.column_config.CheckboxColumn("Contract"),
+                            "Tax Ref Received": st.column_config.CheckboxColumn("Tax Ref")
+                        },
+                        key="staff_editor"
+                    )
+
+                    if st.button("💾 Save Changes to Staff List"):
+                        update_employee_batch(edited_df)
+                        st.success("Staff list updated successfully!")
+                        st.rerun()
+                else:
+                    st.info("No staff loaded yet.")
+
+                st.divider()
+
+                # C. Add New Employee Form (AUTO-CLEAR)
+                st.markdown("#### ➕ Add New Employee")
+                with st.form("add_emp"):
+                    c1, c2, c3 = st.columns(3)
+                    e_name = c1.text_input("Name", key="new_name")
+                    e_sur = c2.text_input("Surname", key="new_sur")
+                    e_id = c3.text_input("ID Number", key="new_id")
+
+                    c4, c5 = st.columns(2)
+                    e_pos = c4.text_input("Position", key="new_pos")
+                    e_sal = c5.number_input("Gross Salary", min_value=0.0, key="new_sal")
+                    
+                    st.markdown("**Documents Received:**")
+                    col_a, col_b, col_c = st.columns(3)
+                    chk_pay = col_a.checkbox("Latest Payslip", key="new_chk_pay")
+                    chk_con = col_b.checkbox("Employment Contract", key="new_chk_con")
+                    chk_tax = col_c.checkbox("Indiv Tax Number", key="new_chk_tax")
+                    
+                    if st.form_submit_button("Add Employee"):
+                        if e_name and e_sur and e_id:
+                            add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
+                            
+                            # CLEAR FORM
+                            st.session_state["new_name"] = ""
+                            st.session_state["new_sur"] = ""
+                            st.session_state["new_id"] = ""
+                            st.session_state["new_pos"] = ""
+                            st.session_state["new_sal"] = 0.0
+                            st.session_state["new_chk_pay"] = False
+                            st.session_state["new_chk_con"] = False
+                            st.session_state["new_chk_tax"] = False
+                            
+                            st.success("Employee Added")
+                            st.rerun()
+                        else:
+                            st.error("Name, Surname and ID are required.")
 
             # --- TAB 4: DEPARTMENT HANDOVERS ---
             with tab4:
@@ -272,7 +377,6 @@ def main():
                             st.success("Saved")
                             st.rerun()
                 
-                # Broker
                 st.markdown("**External Broker**")
                 broker_email = get_val("Insurance Broker Email")
                 b_date = get_val("Broker Email Sent Date")
@@ -285,11 +389,10 @@ def main():
                         st.markdown(lnk, unsafe_allow_html=True)
                     if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.rerun()
                 
-                # Internal Insurance
                 st.markdown("**Internal Insurance Dept**")
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
 
-                # 4. Wages (UPDATED WITH NEW DETAILS)
+                # 4. Wages
                 wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
                 wages_body += "--- PROJECT STATUTORY NUMBERS ---\n"
                 wages_body += f"UIF: {get_val('UIF Number')}\nPAYE: {get_val('PAYE Number')}\nCOIDA: {get_val('COIDA Number')}\n\n"
@@ -300,7 +403,6 @@ def main():
                     c_staff = all_staff_email[all_staff_email['Complex Name'] == b_choice]
                     if not c_staff.empty:
                         for _, emp in c_staff.iterrows():
-                            # Parse bools
                             has_pay = "YES" if str(emp.get('Payslip Received', False)).lower() == 'true' else "NO"
                             has_con = "YES" if str(emp.get('Contract Received', False)).lower() == 'true' else "NO"
                             has_tax = "YES" if str(emp.get('Tax Ref Received', False)).lower() == 'true' else "NO"
@@ -355,13 +457,5 @@ def main():
                         finalize_project_db(b_choice)
                         st.balloons()
 
-# --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
