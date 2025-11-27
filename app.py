@@ -73,6 +73,7 @@ def main():
             head = c4.selectbox("Heading", ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"])
             if st.form_submit_button("Add"):
                 add_master_item(tn, cat, resp, head)
+                st.cache_data.clear() # Fix: Refresh data
                 st.success("Added!")
                 st.rerun()
         st.dataframe(get_data("Master"))
@@ -91,6 +92,7 @@ def main():
             acc = st.text_input("Accounts", value=s_dict.get("Accounts", ""))
             if st.form_submit_button("Save"):
                 save_global_settings({"Wages": wages, "SARS": sars, "Municipal": muni, "Debt Collection": debt, "Insurance": ins, "Accounts": acc})
+                st.cache_data.clear() # Fix: Refresh data
                 st.success("Saved!")
                 st.rerun()
 
@@ -123,6 +125,7 @@ def main():
                         "Date Doc Requested": str(datetime.today())
                     }
                     res = create_new_building(data)
+                    st.cache_data.clear() # Fix: Refresh data
                     if res == "SUCCESS": st.success("Created!"); st.rerun()
                     elif res == "EXISTS": st.error("Exists already.")
                 else:
@@ -157,6 +160,7 @@ def main():
                         em = st.text_input("Email", value=get_val("Manager Email"))
                         if st.form_submit_button("Update"):
                             update_building_details_batch(b_choice, {"Assigned Manager": nm, "Manager Email": em})
+                            st.cache_data.clear()
                             st.success("Updated")
                             st.rerun()
                 
@@ -166,6 +170,7 @@ def main():
                 ae = c2.text_input("Agent Email", value=get_val("Agent Email"))
                 if st.button("Generate Request PDF"):
                     update_project_agent_details(b_choice, an, ae)
+                    st.cache_data.clear()
                     items = get_data("Checklist")
                     req_items = items[(items['Complex Name'] == b_choice) & (items['Responsibility'] != 'Pretor Group')]
                     pdf = generate_appointment_pdf(b_choice, req_items, an, get_val("Take On Date"), get_val("Year End"), get_val("Building Code"))
@@ -206,6 +211,7 @@ def main():
                     )
                     if st.button("Save Changes"):
                         save_checklist_batch(b_choice, edited)
+                        st.cache_data.clear()
                         st.success("Saved!")
                         st.rerun()
 
@@ -242,6 +248,7 @@ def main():
                             update_building_details_batch(b_choice, {
                                 "UIF Number": uif_n, "PAYE Number": paye_n, "COIDA Number": coida_n
                             })
+                            st.cache_data.clear()
                             st.success("Saved and locked.")
                             st.rerun()
 
@@ -284,6 +291,7 @@ def main():
 
                     if st.button("💾 Save Changes to Staff List"):
                         update_employee_batch(edited_df)
+                        st.cache_data.clear() # Fix: Refresh grid
                         st.success("Staff list updated successfully!")
                         st.rerun()
                 else:
@@ -314,6 +322,7 @@ def main():
                         if e_name and e_sur and e_id:
                             try:
                                 add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
+                                st.cache_data.clear() # Fix: Refresh grid
                                 st.success("Employee Added")
                                 st.rerun()
                             except Exception as e:
@@ -337,6 +346,7 @@ def main():
                         st.success(f"✅ Sent on: {sent_date}")
                         if st.button(f"Reset {dept_name}", key=f"rst_{dept_name}"):
                             update_email_status(b_choice, db_column, "")
+                            st.cache_data.clear()
                             st.rerun()
                     else:
                         st.info(f"Pending | Target: {target_email if target_email else 'No Email Set'}")
@@ -352,6 +362,7 @@ def main():
                         with col_b:
                             if st.button(f"Mark {dept_name} Sent", key=f"btn_{dept_name}"):
                                 update_email_status(b_choice, db_column)
+                                st.cache_data.clear()
                                 st.rerun()
                     st.divider()
 
@@ -367,6 +378,7 @@ def main():
                         bl = st.number_input("Balance")
                         if st.form_submit_button("Add Account"):
                             add_council_account(b_choice, an, sv, bl)
+                            st.cache_data.clear()
                             st.success("Added")
                             st.rerun()
                 render_handover_section("Council", "Council Email Sent Date", "Municipal")
@@ -379,6 +391,7 @@ def main():
                         be = st.text_input("Email", value=get_val("Insurance Broker Email"))
                         if st.form_submit_button("Save Details"):
                             save_broker_details(b_choice, bn, be)
+                            st.cache_data.clear()
                             st.success("Saved")
                             st.rerun()
                 
@@ -392,7 +405,10 @@ def main():
                         subj = urllib.parse.quote(f"Insurance Appointment: {b_choice}")
                         lnk = f'<a href="mailto:{broker_email}?subject={subj}" style="margin-right:15px;">📧 Draft Broker Email</a>'
                         st.markdown(lnk, unsafe_allow_html=True)
-                    if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.rerun()
+                    if st.button("Mark Broker Sent"): 
+                        update_email_status(b_choice, "Broker Email Sent Date")
+                        st.cache_data.clear()
+                        st.rerun()
                 
                 st.markdown("**Internal Insurance Dept**")
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
@@ -450,6 +466,7 @@ def main():
                     with col_f2:
                         if st.button("Mark Fee Email Sent"): 
                             update_email_status(b_choice, "Fee Confirmation Email Sent Date")
+                            st.cache_data.clear()
                             st.rerun()
 
                 st.divider()
@@ -460,6 +477,7 @@ def main():
                 with c1:
                     if st.button("Finalize Project"):
                         finalize_project_db(b_choice)
+                        st.cache_data.clear()
                         st.balloons()
 
 if __name__ == "__main__":
