@@ -73,7 +73,7 @@ def main():
             head = c4.selectbox("Heading", ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"])
             if st.form_submit_button("Add"):
                 add_master_item(tn, cat, resp, head)
-                st.cache_data.clear() # Fix: Refresh data
+                st.cache_data.clear()
                 st.success("Added!")
                 st.rerun()
         st.dataframe(get_data("Master"))
@@ -92,7 +92,7 @@ def main():
             acc = st.text_input("Accounts", value=s_dict.get("Accounts", ""))
             if st.form_submit_button("Save"):
                 save_global_settings({"Wages": wages, "SARS": sars, "Municipal": muni, "Debt Collection": debt, "Insurance": ins, "Accounts": acc})
-                st.cache_data.clear() # Fix: Refresh data
+                st.cache_data.clear()
                 st.success("Saved!")
                 st.rerun()
 
@@ -125,7 +125,7 @@ def main():
                         "Date Doc Requested": str(datetime.today())
                     }
                     res = create_new_building(data)
-                    st.cache_data.clear() # Fix: Refresh data
+                    st.cache_data.clear()
                     if res == "SUCCESS": st.success("Created!"); st.rerun()
                     elif res == "EXISTS": st.error("Exists already.")
                 else:
@@ -142,7 +142,7 @@ def main():
             
             def get_val(col): return str(p_row.get(col, ''))
 
-            # REPLACE TABS WITH PERSISTENT NAVIGATION
+            # NAVIGATION
             st.divider()
             sub_nav = st.radio(
                 "Section Navigation", 
@@ -156,76 +156,52 @@ def main():
             if sub_nav == "Overview":
                 st.subheader(f"Project Overview: {b_choice}")
                 
-                # We use a form to capture missing details
                 with st.form("project_overview_form"):
                     st.markdown("#### 📝 Building Details")
                     st.caption("Fields with existing data are locked 🔒. Please fill in any missing details.")
                     
-                    # Helper function to generate an input that is locked if data exists
                     def smart_input(label, col_name, col_obj=st):
-                        # Get current value safely
                         curr_val = str(p_row.get(col_name, ''))
+                        # FIX: Enforce boolean result for 'disabled'
+                        has_data = bool(curr_val and curr_val.lower() not in ["none", "nan", ""])
                         
-                        # Check if it has real data (ignoring 'None', 'nan', empty strings)
-                        has_data = curr_val and curr_val.lower() not in ["none", "nan", ""]
-                        
-                        # Render input
-                        # We use key=f"ov_{col_name}" to avoid clashes with other widgets
                         return col_obj.text_input(
                             label, 
                             value=curr_val if has_data else "", 
-                            disabled=has_data, # LOCK if data exists
+                            disabled=has_data,
                             key=f"ov_{col_name}",
                             placeholder="Enter missing detail..."
                         )
 
-                    # Layout: 3 Columns for a clean look
                     c1, c2, c3 = st.columns(3)
-                    
                     with c1:
-                        # Critical Info
                         u_code = smart_input("Building Code", "Building Code", c1)
                         u_type = smart_input("Type (BC/HOA)", "Type", c1)
                         u_units = smart_input("No of Units", "No of Units", c1)
                     
                     with c2:
-                        # Financial / Dates
                         u_ye = smart_input("Year End", "Year End", c2)
                         u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c2)
                         u_tod = smart_input("Take On Date", "Take On Date", c2)
                     
                     with c3:
-                        # People
                         u_man = smart_input("Portfolio Manager", "Assigned Manager", c3)
                         u_mail = smart_input("Manager Email", "Manager Email", c3)
                         u_tom = smart_input("Take-On Manager", "TakeOn Name", c3)
 
                     st.markdown("---")
                     
-                    # Submit Button
                     if st.form_submit_button("💾 Save Missing Details"):
-                        # Gather all values (Streamlit returns the value even if the input is disabled)
                         updates = {
-                            "Building Code": u_code,
-                            "Type": u_type,
-                            "No of Units": u_units,
-                            "Year End": u_ye,
-                            "Mgmt Fees": u_fees,
-                            "Take On Date": u_tod,
-                            "Assigned Manager": u_man,
-                            "Manager Email": u_mail,
-                            "TakeOn Name": u_tom
+                            "Building Code": u_code, "Type": u_type, "No of Units": u_units,
+                            "Year End": u_ye, "Mgmt Fees": u_fees, "Take On Date": u_tod,
+                            "Assigned Manager": u_man, "Manager Email": u_mail, "TakeOn Name": u_tom
                         }
-                        
-                        # Send to Supabase
                         update_building_details_batch(b_choice, updates)
-                        
-                        # Clear cache and reload so the new fields become locked
                         st.cache_data.clear()
                         st.success("Project details updated.")
                         st.rerun()
 
-                # Previous Agent Section
                 st.markdown("### Previous Agent Request")
                 c1, c2 = st.columns(2)
                 an = c1.text_input("Agent Name", value=get_val("Agent Name"))
@@ -234,12 +210,9 @@ def main():
                 if st.button("Generate Request PDF"):
                     update_project_agent_details(b_choice, an, ae)
                     st.cache_data.clear()
-                    
                     items = get_data("Checklist")
                     req_items = items[(items['Complex Name'] == b_choice) & (items['Responsibility'] != 'Pretor Group')]
-                    
                     pdf = generate_appointment_pdf(b_choice, req_items, an, get_val("Take On Date"), get_val("Year End"), get_val("Building Code"))
-                    
                     with open(pdf, "rb") as f:
                         st.download_button("Download PDF", f, file_name=pdf)
 
@@ -285,7 +258,7 @@ def main():
             elif sub_nav == "Staff Details":
                 st.subheader(f"Staff Management: {b_choice}")
                 
-                # --- A. Statutory Numbers ---
+                # A. Statutory Numbers
                 st.markdown("#### 🏢 Project Statutory Numbers")
                 uif_val = get_val("UIF Number") if "UIF Number" in p_row.index else ""
                 paye_val = get_val("PAYE Number") if "PAYE Number" in p_row.index else ""
@@ -320,7 +293,7 @@ def main():
 
                 st.divider()
 
-                # --- B. Staff List ---
+                # B. Staff List
                 st.markdown("#### 👥 Employee List (Editable)")
                 all_staff = get_data("Employees")
                 
@@ -333,7 +306,6 @@ def main():
                     current_staff = pd.DataFrame()
 
                 if not current_staff.empty:
-                    # Convert booleans
                     for col in ['Payslip Received', 'Contract Received', 'Tax Ref Received']:
                         if col in current_staff.columns:
                             current_staff[col] = current_staff[col].apply(lambda x: True if str(x).lower() == 'true' else False)
@@ -357,7 +329,7 @@ def main():
 
                     if st.button("💾 Save Changes to Staff List"):
                         update_employee_batch(edited_df)
-                        st.cache_data.clear() # Fix: Refresh grid
+                        st.cache_data.clear()
                         st.success("Staff list updated successfully!")
                         st.rerun()
                 else:
@@ -365,7 +337,7 @@ def main():
 
                 st.divider()
 
-                # --- C. Add New Employee Form ---
+                # C. Add New Employee Form
                 st.markdown("#### ➕ Add New Employee")
                 
                 with st.form("add_emp", clear_on_submit=True):
@@ -388,7 +360,7 @@ def main():
                         if e_name and e_sur and e_id:
                             try:
                                 add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
-                                st.cache_data.clear() # Fix: Refresh grid
+                                st.cache_data.clear()
                                 st.success("Employee Added")
                                 st.rerun()
                             except Exception as e:
@@ -548,4 +520,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
