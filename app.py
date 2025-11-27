@@ -627,7 +627,6 @@ def main():
                 
                 st.markdown("**Internal Insurance Dept**")
                 
-                # UPDATED: Friendly email body with path and quotation request
                 ins_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance"
                 internal_ins_body = f"Hi Insurance Team,\n\n"
                 internal_ins_body += f"Please note that {b_choice} is now being managed by Pretor.\n\n"
@@ -638,7 +637,9 @@ def main():
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", custom_body=internal_ins_body)
 
                 # 5. Wages
-                wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
+                wages_body = f"Dear Wages Team,\n\nPlease note that the relevant information received from the previous agents regarding salaries and wages can be found at:\n"
+                wages_body += f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\salaries&wages\n\n"
+                wages_body += "Below is a summary of the project details and staff loaded on the system:\n\n"
                 wages_body += "--- PROJECT STATUTORY NUMBERS ---\n"
                 wages_body += f"UIF: {get_val('UIF Number')}\nPAYE: {get_val('PAYE Number')}\nCOIDA: {get_val('COIDA Number')}\n\n"
                 wages_body += "--- STAFF DETAILS ---\n"
