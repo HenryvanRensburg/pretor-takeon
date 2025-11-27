@@ -13,28 +13,6 @@ import urllib.parse
 from datetime import datetime
 import os
 
-# Add this temporarily to the top of app.py to debug
-import streamlit as st
-
-st.write("Debug: Checking Secrets...")
-try:
-    # Print the keys (names) only, NOT the values
-    st.write("Available Keys:", list(st.secrets.keys()))
-    
-    # Check if specific keys exist
-    if "SUPABASE_URL" in st.secrets:
-        st.success("✅ SUPABASE_URL found")
-    else:
-        st.error("❌ SUPABASE_URL missing")
-        
-    if "SUPABASE_KEY" in st.secrets:
-        st.success("✅ SUPABASE_KEY found")
-    else:
-        st.error("❌ SUPABASE_KEY missing")
-        
-except Exception as e:
-    st.error(f"Error accessing secrets: {e}")
-    
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pretor Take-On", layout="wide")
 
@@ -245,15 +223,12 @@ def main():
                     
                     if st.form_submit_button("💾 Save Missing Details"):
                         updates = {
-                            # General
                             "Building Code": u_code, "Type": u_type, "No of Units": u_units,
                             "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos,
                             "Physical Address": u_addr,
-                            # Financial
                             "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp,
                             "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod,
                             "Auditor": u_aud, "Last Audit": u_last_aud,
-                            # Team
                             "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e,
                             "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom,
                             "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e
@@ -692,10 +667,8 @@ def main():
                 # 6. Debt Collection (UPDATED)
                 st.markdown("#### Debt Collection")
                 
-                # Fetch Arrears Data
                 arrears_data = get_data("Arrears")
                 
-                # Auto-fix column names for Arrears
                 if not arrears_data.empty:
                     rename_map_arr = {
                         'complex_name': 'Complex Name',
@@ -716,7 +689,6 @@ def main():
                     if not curr_arrears.empty:
                         st.caption("📝 Edit Arrears Details Below:")
                         
-                        # Define columns to show in editor
                         arr_cols = ['id', 'Unit Number', 'Outstanding Amount', 'Attorney Name', 'Attorney Email', 'Attorney Phone']
                         arr_cols = [c for c in arr_cols if c in curr_arrears.columns]
                         
@@ -738,7 +710,6 @@ def main():
                             st.success("Arrears updated.")
                             st.rerun()
                         
-                        # Build Email Body
                         for _, row in curr_arrears.iterrows():
                             dc_body += f"Unit: {row.get('Unit Number', '')} | Amt: R{row.get('Outstanding Amount', 0)}\n"
                             dc_body += f"   Attorney: {row.get('Attorney Name', 'None')} ({row.get('Attorney Email', '')} - {row.get('Attorney Phone', '')})\n"
@@ -752,7 +723,6 @@ def main():
                 
                 dc_body += "\nRegards,\nPretor Take-On Team"
 
-                # Add New Arrears Form
                 with st.expander("➕ Add New Arrears Record", expanded=False):
                     with st.form("add_arr_form", clear_on_submit=True):
                         c1, c2 = st.columns(2)
@@ -773,7 +743,6 @@ def main():
                             else:
                                 st.error("Unit Number required")
 
-                # Render Email Section manually for consistency
                 render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
 
                 # 7. Accounts
@@ -814,4 +783,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
