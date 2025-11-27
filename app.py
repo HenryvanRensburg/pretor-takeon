@@ -202,15 +202,15 @@ def main():
                         st.success("Saved!")
                         st.rerun()
 
-            # --- TAB 3: STAFF DETAILS (Editable & Auto-Clear) ---
+            # --- TAB 3: STAFF DETAILS (Safe & Editable) ---
             with tab3:
                 st.subheader(f"Staff Management: {b_choice}")
                 
-                # A. Statutory Numbers (Project Level)
+                # --- A. Statutory Numbers ---
                 st.markdown("#### 🏢 Project Statutory Numbers")
-                uif_val = get_val("UIF Number")
-                paye_val = get_val("PAYE Number")
-                coida_val = get_val("COIDA Number")
+                uif_val = get_val("UIF Number") if "UIF Number" in p_row.index else ""
+                paye_val = get_val("PAYE Number") if "PAYE Number" in p_row.index else ""
+                coida_val = get_val("COIDA Number") if "COIDA Number" in p_row.index else ""
 
                 def is_filled(val):
                     return val and str(val).lower() not in ["none", "nan", ""]
@@ -240,24 +240,29 @@ def main():
 
                 st.divider()
 
-                # B. Staff List (EDITABLE)
+                # --- B. Staff List ---
                 st.markdown("#### 👥 Employee List (Editable)")
                 all_staff = get_data("Employees")
+                
                 if not all_staff.empty:
-                    current_staff = all_staff[all_staff['Complex Name'] == b_choice].copy()
+                    if 'Complex Name' in all_staff.columns:
+                        current_staff = all_staff[all_staff['Complex Name'] == b_choice].copy()
+                    else:
+                        current_staff = pd.DataFrame()
                 else:
                     current_staff = pd.DataFrame()
 
                 if not current_staff.empty:
+                    # Convert booleans
                     for col in ['Payslip Received', 'Contract Received', 'Tax Ref Received']:
                         if col in current_staff.columns:
                             current_staff[col] = current_staff[col].apply(lambda x: True if str(x).lower() == 'true' else False)
 
                     display_cols = ['id', 'Name', 'Surname', 'ID Number', 'Position', 'Salary', 'Payslip Received', 'Contract Received', 'Tax Ref Received']
-                    display_cols = [c for c in display_cols if c in current_staff.columns]
+                    final_cols = [c for c in display_cols if c in current_staff.columns]
 
                     edited_df = st.data_editor(
-                        current_staff[display_cols],
+                        current_staff[final_cols],
                         hide_index=True,
                         use_container_width=True,
                         column_config={
@@ -279,9 +284,11 @@ def main():
 
                 st.divider()
 
-                # C. Add New Employee Form (AUTO-CLEAR)
+                # --- C. Add New Employee Form ---
                 st.markdown("#### ➕ Add New Employee")
-                with st.form("add_emp"):
+                
+                # FIX: clear_on_submit=True handles the reset automatically
+                with st.form("add_emp", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     e_name = c1.text_input("Name", key="new_name")
                     e_sur = c2.text_input("Surname", key="new_sur")
@@ -299,20 +306,12 @@ def main():
                     
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur and e_id:
-                            add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
-                            
-                            # CLEAR FORM
-                            st.session_state["new_name"] = ""
-                            st.session_state["new_sur"] = ""
-                            st.session_state["new_id"] = ""
-                            st.session_state["new_pos"] = ""
-                            st.session_state["new_sal"] = 0.0
-                            st.session_state["new_chk_pay"] = False
-                            st.session_state["new_chk_con"] = False
-                            st.session_state["new_chk_tax"] = False
-                            
-                            st.success("Employee Added")
-                            st.rerun()
+                            try:
+                                add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
+                                st.success("Employee Added")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error adding employee: {e}")
                         else:
                             st.error("Name, Surname and ID are required.")
 
