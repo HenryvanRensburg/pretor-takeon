@@ -13,6 +13,28 @@ import urllib.parse
 from datetime import datetime
 import os
 
+# Add this temporarily to the top of app.py to debug
+import streamlit as st
+
+st.write("Debug: Checking Secrets...")
+try:
+    # Print the keys (names) only, NOT the values
+    st.write("Available Keys:", list(st.secrets.keys()))
+    
+    # Check if specific keys exist
+    if "SUPABASE_URL" in st.secrets:
+        st.success("✅ SUPABASE_URL found")
+    else:
+        st.error("❌ SUPABASE_URL missing")
+        
+    if "SUPABASE_KEY" in st.secrets:
+        st.success("✅ SUPABASE_KEY found")
+    else:
+        st.error("❌ SUPABASE_KEY missing")
+        
+except Exception as e:
+    st.error(f"Error accessing secrets: {e}")
+    
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pretor Take-On", layout="wide")
 
@@ -792,3 +814,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
