@@ -238,3 +238,24 @@ def update_employee_batch(edited_df):
         return "SUCCESS"
     except Exception as e:
         return str(e)
+
+def update_council_batch(edited_df):
+    """
+    Updates council accounts based on edits made in the Streamlit data editor.
+    """
+    try:
+        # Convert DataFrame to records
+        records = edited_df.to_dict('records')
+        
+        for row in records:
+            row_id = row.get('id')
+            if row_id:
+                # Prepare data, removing the ID from the update payload
+                update_data = {k: v for k, v in row.items() if k != 'id'}
+                # We assume the table is named 'Council' or 'CouncilAccounts' based on your setup. 
+                # Please ensure this matches your Supabase table name.
+                supabase.table("Council").update(update_data).eq("id", row_id).execute()
+                
+        return "SUCCESS"
+    except Exception as e:
+        return str(e)
