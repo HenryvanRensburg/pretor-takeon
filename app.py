@@ -5,7 +5,8 @@ from database import (
     add_council_account, add_trustee, delete_record_by_match, save_global_settings, 
     update_building_details_batch, create_new_building, update_project_agent_details, 
     save_checklist_batch, finalize_project_db, save_broker_details, update_email_status, 
-    update_service_provider_date, update_wages_status, update_employee_batch, update_council_batch
+    update_service_provider_date, update_wages_status, update_employee_batch, 
+    update_council_batch, update_arrears_batch
 )
 from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
@@ -666,8 +667,92 @@ def main():
                 
                 render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
-                # 6. Debt Collection
-                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
+                # 6. Debt Collection (UPDATED)
+                st.markdown("#### Debt Collection")
+                
+                # Fetch Arrears Data
+                arrears_data = get_data("Arrears")
+                
+                # Auto-fix column names for Arrears
+                if not arrears_data.empty:
+                    rename_map_arr = {
+                        'complex_name': 'Complex Name',
+                        'unit_number': 'Unit Number',
+                        'outstanding_amount': 'Outstanding Amount',
+                        'attorney_name': 'Attorney Name',
+                        'attorney_email': 'Attorney Email',
+                        'attorney_phone': 'Attorney Phone',
+                        'Complex_Name': 'Complex Name'
+                    }
+                    arrears_data.rename(columns=rename_map_arr, inplace=True)
+
+                dc_body = f"Dear Debt Collection Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ARREARS LIST ---\n"
+                
+                if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
+                    curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
+                    
+                    if not curr_arrears.empty:
+                        st.caption("📝 Edit Arrears Details Below:")
+                        
+                        # Define columns to show in editor
+                        arr_cols = ['id', 'Unit Number', 'Outstanding Amount', 'Attorney Name', 'Attorney Email', 'Attorney Phone']
+                        arr_cols = [c for c in arr_cols if c in curr_arrears.columns]
+                        
+                        edited_arrears = st.data_editor(
+                            curr_arrears[arr_cols],
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "id": st.column_config.Column(disabled=True, width="small"),
+                                "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f"),
+                                "Unit Number": st.column_config.TextColumn("Unit No")
+                            },
+                            key="arrears_editor"
+                        )
+                        
+                        if st.button("💾 Save Changes to Arrears"):
+                            update_arrears_batch(edited_arrears)
+                            st.cache_data.clear()
+                            st.success("Arrears updated.")
+                            st.rerun()
+                        
+                        # Build Email Body
+                        for _, row in curr_arrears.iterrows():
+                            dc_body += f"Unit: {row.get('Unit Number', '')} | Amt: R{row.get('Outstanding Amount', 0)}\n"
+                            dc_body += f"   Attorney: {row.get('Attorney Name', 'None')} ({row.get('Attorney Email', '')} - {row.get('Attorney Phone', '')})\n"
+                            dc_body += "   ----------------------------\n"
+                    else:
+                        st.info("No arrears loaded yet.")
+                        dc_body += "(No arrears loaded)\n"
+                else:
+                    st.info("No arrears data available.")
+                    dc_body += "(No arrears loaded)\n"
+                
+                dc_body += "\nRegards,\nPretor Take-On Team"
+
+                # Add New Arrears Form
+                with st.expander("➕ Add New Arrears Record", expanded=False):
+                    with st.form("add_arr_form", clear_on_submit=True):
+                        c1, c2 = st.columns(2)
+                        a_unit = c1.text_input("Unit Number", key="new_a_u")
+                        a_amt = c2.number_input("Outstanding Amount", min_value=0.0, key="new_a_a")
+                        
+                        c3, c4, c5 = st.columns(3)
+                        a_att = c3.text_input("Attorney Name", key="new_a_n")
+                        a_mail = c4.text_input("Attorney Email", key="new_a_e")
+                        a_ph = c5.text_input("Attorney Phone", key="new_a_p")
+                        
+                        if st.form_submit_button("Add Record"):
+                            if a_unit:
+                                add_arrears_item(b_choice, a_unit, a_amt, a_att, a_mail, a_ph)
+                                st.cache_data.clear()
+                                st.success("Added")
+                                st.rerun()
+                            else:
+                                st.error("Unit Number required")
+
+                # Render Email Section manually for consistency
+                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
 
                 # 7. Accounts
                 render_handover_section("Accounts", "Accounts Sent Date", "Accounts")
