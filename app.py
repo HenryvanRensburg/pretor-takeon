@@ -210,99 +210,135 @@ def main():
                         st.rerun()
 
             with tab3:
-                # SARS
-                st.markdown("#### SARS")
-                s_date = get_val("SARS Sent Date")
-                if s_date and s_date != "None":
-                    st.success(f"Sent: {s_date}")
-                    if st.button("Reset SARS"): update_email_status(b_choice, "SARS Sent Date", ""); st.rerun()
-                else:
-                    if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.rerun()
+                st.markdown("### Department Handovers")
                 
-                st.divider()
-                
-                # Council
-                st.markdown("#### Council")
-                with st.expander("Add Account"):
-                    with st.form("add_c"):
-                        an = st.text_input("Acc Number")
-                        sv = st.text_input("Service")
-                        bl = st.number_input("Balance")
-                        if st.form_submit_button("Add"):
-                            add_council_account(b_choice, an, sv, bl)
-                            st.rerun()
-                
-                c_date = get_val("Council Email Sent Date")
-                if c_date and c_date != "None":
-                    st.success(f"Sent: {c_date}")
-                    if st.button("Reset Council"): update_email_status(b_choice, "Council Email Sent Date", ""); st.rerun()
-                else:
-                    if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.rerun()
+                # 1. Load Email Settings
+                settings = get_data("Settings")
+                # Create a lookup dictionary: {'Wages': 'wages@pretor.co.za', ...}
+                s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
 
-                st.divider()
-                
-                # Insurance
+                # 2. Define a helper to render each section consistently
+                def render_handover_section(dept_name, db_column, email_key, custom_body=None):
+                    st.markdown(f"#### {dept_name}")
+                    
+                    # Check current status in DB
+                    sent_date = get_val(db_column)
+                    target_email = s_dict.get(email_key, "")
+                    
+                    # Status Indicator
+                    if sent_date and sent_date != "None":
+                        st.success(f"✅ Sent on: {sent_date}")
+                        if st.button(f"Reset {dept_name}", key=f"rst_{dept_name}"):
+                            update_email_status(b_choice, db_column, "")
+                            st.rerun()
+                    else:
+                        st.info(f"Pending | Target: {target_email if target_email else 'No Email Set'}")
+                        
+                        col_a, col_b = st.columns([1, 1])
+                        
+                        # A: Draft Email Link
+                        with col_a:
+                            if target_email:
+                                subject = urllib.parse.quote(f"Handover: {b_choice} - {dept_name}")
+                                body = urllib.parse.quote(custom_body if custom_body else f"Dear {dept_name} Team,\n\nPlease find attached the handover documents for {b_choice}.\n\nRegards,\nPretor Take-On Team")
+                                link = f'<a href="mailto:{target_email}?subject={subject}&body={body}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                                st.markdown(link, unsafe_allow_html=True)
+                            else:
+                                st.warning("⚠️ Set Email in Global Settings")
+
+                        # B: Mark as Sent Button
+                        with col_b:
+                            if st.button(f"Mark {dept_name} Sent", key=f"btn_{dept_name}"):
+                                update_email_status(b_choice, db_column)
+                                st.rerun()
+                    st.divider()
+
+                # --- RENDER SECTIONS ---
+
+                # 1. SARS
+                render_handover_section("SARS", "SARS Sent Date", "SARS")
+
+                # 2. Council (Has extra feature: Add Account)
+                st.markdown("#### Council")
+                with st.expander("➕ Add Council Account Details (Optional)"):
+                    with st.form("add_c_new"):
+                        an = st.text_input("Acc Number")
+                        sv = st.text_input("Service (e.g., Water/Elec)")
+                        bl = st.number_input("Balance")
+                        if st.form_submit_button("Add Account"):
+                            add_council_account(b_choice, an, sv, bl)
+                            st.success("Added")
+                            st.rerun()
+                # Render the email part for Council
+                render_handover_section("Council", "Council Email Sent Date", "Municipal")
+
+                # 3. Insurance (Has extra feature: Broker Details)
                 st.markdown("#### Insurance")
-                with st.expander("Broker Details"):
-                    with st.form("brok"):
+                with st.expander("📝 Edit Broker Details"):
+                    with st.form("brok_new"):
                         bn = st.text_input("Name", value=get_val("Insurance Broker Name"))
                         be = st.text_input("Email", value=get_val("Insurance Broker Email"))
-                        if st.form_submit_button("Save"):
+                        if st.form_submit_button("Save Details"):
                             save_broker_details(b_choice, bn, be)
                             st.success("Saved")
                             st.rerun()
                 
-                c1, c2 = st.columns(2)
-                with c1:
-                    b_date = get_val("Broker Email Sent Date")
-                    if b_date and b_date != "None":
-                        st.success(f"Broker: {b_date}")
-                    else:
-                        if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.rerun()
-                with c2:
-                    i_date = get_val("Internal Ins Email Sent Date")
-                    if i_date and i_date != "None":
-                        st.success(f"Internal: {i_date}")
-                    else:
-                        if st.button("Mark Internal Sent"): update_email_status(b_choice, "Internal Ins Email Sent Date"); st.rerun()
+                # Broker Email
+                broker_email = get_val("Insurance Broker Email")
+                # We handle Broker manually because the email comes from the Project, not Global Settings
+                st.markdown("**External Broker**")
+                b_date = get_val("Broker Email Sent Date")
+                if b_date and b_date != "None":
+                    st.success(f"Sent: {b_date}")
+                else:
+                    if broker_email:
+                        subj = urllib.parse.quote(f"Insurance Appointment: {b_choice}")
+                        lnk = f'<a href="mailto:{broker_email}?subject={subj}" style="margin-right:15px;">📧 Draft Broker Email</a>'
+                        st.markdown(lnk, unsafe_allow_html=True)
+                    if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.rerun()
                 
-                st.divider()
+                # Internal Insurance Email
+                st.markdown("**Internal Insurance Dept**")
+                render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
 
-                # Reports
-                st.markdown("### Reports & Finalize")
+                # 4. Wages (New!)
+                render_handover_section("Wages", "Wages Sent Date", "Wages")
+
+                # 5. Debt Collection (New!)
+                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
+
+                # 6. Accounts (New!)
+                render_handover_section("Accounts", "Accounts Sent Date", "Accounts")
+
+                # 7. Fee Confirmation (Project Manager)
+                st.markdown("#### Fee Confirmation")
+                pm_email = get_val("Manager Email")
+                # Custom body for fees
+                fee_body = f"Please confirm the management fees for {b_choice}.\n\nAgreed Fees: {get_val('Mgmt Fees')}"
                 
-                # Fee Confirmation
+                # Manually render Fee section as it uses PM email, not Global Settings
                 f_date = get_val("Fee Confirmation Email Sent Date")
                 if f_date and f_date != "None":
-                     st.success(f"Fee Confirmation Sent: {f_date}")
+                    st.success(f"Sent: {f_date}")
                 else:
-                     if st.button("Mark Fee Email Sent"): update_email_status(b_choice, "Fee Confirmation Email Sent Date"); st.rerun()
+                    col_f1, col_f2 = st.columns([1,1])
+                    with col_f1:
+                        if pm_email:
+                            s_fee = urllib.parse.quote(f"Fee Confirmation: {b_choice}")
+                            b_fee = urllib.parse.quote(fee_body)
+                            l_fee = f'<a href="mailto:{pm_email}?subject={s_fee}&body={b_fee}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Fee Email</a>'
+                            st.markdown(l_fee, unsafe_allow_html=True)
+                    with col_f2:
+                        if st.button("Mark Fee Email Sent"): 
+                            update_email_status(b_choice, "Fee Confirmation Email Sent Date")
+                            st.rerun()
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Draft Client Update Email"):
-                        # FIX: Define client_email properly
-                        client_email = get_val("Manager Email")
-                        
-                        # Generate comprehensive status string
-                        items = get_data("Checklist")
-                        if not items.empty:
-                             # FIX: Use string comparison safe for Supabase bools
-                             c_items = items[(items['Complex Name'] == b_choice) & (items['Received'].apply(lambda x: str(x).lower() == 'true'))]
-                             received_count = len(c_items)
-                        else: received_count = 0
-                        
-                        body = f"Progress Update for {b_choice}:\n\n"
-                        body += f"- Insurance: {'Done' if i_date else 'Pending'}\n"
-                        body += f"- SARS: {'Done' if s_date else 'Pending'}\n"
-                        body += f"- Checklist Items Received: {received_count}\n"
-                        
-                        subject = urllib.parse.quote(f"Update: {b_choice}")
-                        body = urllib.parse.quote(body)
-                        link = f'<a href="mailto:{client_email}?subject={subject}&body={body}">Send Email</a>'
-                        st.markdown(link, unsafe_allow_html=True)
+                st.divider()
 
-                with col2:
+                # 8. Client Update & Finalize
+                st.markdown("### 🏁 Final Actions")
+                c1, c2 = st.columns(2)
+                with c1:
                     if st.button("Finalize Project"):
                         finalize_project_db(b_choice)
                         st.balloons()
@@ -310,3 +346,4 @@ def main():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
+
