@@ -1,14 +1,23 @@
 import os
 import pandas as pd
+import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
 
-# Initialize Supabase
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
+# --- INITIALIZE SUPABASE ---
+# 1. Try loading from Streamlit Secrets (Best for Streamlit Cloud)
+try:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+except (FileNotFoundError, KeyError):
+    # 2. Fallback to Environment Variables (Best for Local/Docker)
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
 
+# 3. Final Check
 if not url or not key:
-    raise ValueError("Supabase URL and Key must be set in environment variables.")
+    st.error("🚨 Supabase Credentials Missing! Please set SUPABASE_URL and SUPABASE_KEY in .streamlit/secrets.toml")
+    st.stop()
 
 supabase: Client = create_client(url, key)
 
@@ -160,8 +169,6 @@ def save_checklist_batch(complex_name, edited_df):
     try:
         records = edited_df.to_dict('records')
         for row in records:
-            # Assuming uniqueness by Task Name + Complex Name or ID. 
-            # Ideally Checklist has an ID.
             row_id = row.get('id')
             if row_id:
                 update_data = {k: v for k, v in row.items() if k != 'id'}
@@ -183,21 +190,18 @@ def add_master_item(task_name, category, responsibility, heading):
 def save_global_settings(settings_dict):
     """Updates the Settings table."""
     try:
-        # Clear existing and insert new (or update if you have fixed IDs)
-        # Simple approach: Delete all, Insert all
         supabase.table("Settings").delete().neq("id", 0).execute() 
-        
         for dept, email in settings_dict.items():
             supabase.table("Settings").insert({"Department": dept, "Email": email}).execute()
     except Exception as e:
         print(e)
 
-# --- MISC / PLACEHOLDERS (To prevent import errors) ---
+# --- MISC / PLACEHOLDERS ---
 def add_service_provider(name, type, contact):
-    pass # Add implementation if needed
+    pass 
 
 def add_trustee(complex, name, email, phone):
-    pass # Add implementation if needed
+    pass 
 
 def delete_record_by_match(table, col, val):
     try:
