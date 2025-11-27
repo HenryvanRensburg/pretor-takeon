@@ -259,3 +259,37 @@ def update_council_batch(edited_df):
         return "SUCCESS"
     except Exception as e:
         return str(e)
+
+def add_arrears_item(complex_name, unit, amount, att_name, att_email, att_phone):
+    """
+    Adds a new arrears record to the database.
+    """
+    data = {
+        "Complex Name": complex_name,
+        "Unit Number": unit,
+        "Outstanding Amount": amount,
+        "Attorney Name": att_name,
+        "Attorney Email": att_email,
+        "Attorney Phone": att_phone
+    }
+    try:
+        supabase.table("Arrears").insert(data).execute()
+    except Exception as e:
+        print(f"Error adding arrears: {e}")
+        raise e
+
+def update_arrears_batch(edited_df):
+    """
+    Updates arrears records based on edits made in the Streamlit data editor.
+    """
+    try:
+        records = edited_df.to_dict('records')
+        for row in records:
+            row_id = row.get('id')
+            if row_id:
+                # Remove ID from the update payload
+                update_data = {k: v for k, v in row.items() if k != 'id'}
+                supabase.table("Arrears").update(update_data).eq("id", row_id).execute()
+        return "SUCCESS"
+    except Exception as e:
+        return str(e)
