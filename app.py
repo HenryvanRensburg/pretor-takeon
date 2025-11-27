@@ -146,7 +146,7 @@ def main():
             # Helper to get field safely
             def get_val(col): return str(p_row.get(col, ''))
 
-            # UPDATED: Added "Staff Details" tab
+            # TABS
             tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Progress Tracker", "Staff Details", "Department Handovers"])
 
             # --- TAB 1: OVERVIEW ---
@@ -211,24 +211,50 @@ def main():
                         st.success("Saved!")
                         st.rerun()
 
-            # --- TAB 3: STAFF DETAILS (NEW) ---
+            # --- TAB 3: STAFF DETAILS (UPDATED) ---
             with tab3:
-                st.subheader(f"Staff List for {b_choice}")
+                st.subheader(f"Staff Management: {b_choice}")
                 
-                # 1. Fetch existing employees
-                all_staff = get_data("Employees") # Ensure 'Employees' is a valid table key
+                # A. Statutory Numbers (Project Level)
+                st.markdown("#### 🏢 Project Statutory Numbers")
+                with st.form("stat_nums"):
+                    c1, c2, c3 = st.columns(3)
+                    uif_n = c1.text_input("UIF Number", value=get_val("UIF Number"))
+                    paye_n = c2.text_input("PAYE Number", value=get_val("PAYE Number"))
+                    coida_n = c3.text_input("COIDA / Workmens Comp", value=get_val("COIDA Number"))
+                    
+                    if st.form_submit_button("Save Statutory Numbers"):
+                        update_building_details_batch(b_choice, {
+                            "UIF Number": uif_n,
+                            "PAYE Number": paye_n,
+                            "COIDA Number": coida_n
+                        })
+                        st.success("Statutory details saved.")
+                        st.rerun()
+
+                st.divider()
+
+                # B. Staff List
+                st.markdown("#### 👥 Employee List")
+                all_staff = get_data("Employees")
                 if not all_staff.empty:
-                    current_staff = all_staff[all_staff['Complex Name'] == b_choice]
+                    current_staff = all_staff[all_staff['Complex Name'] == b_choice].copy()
                 else:
                     current_staff = pd.DataFrame()
 
-                # 2. Display Staff Table
                 if not current_staff.empty:
+                    # Clean up booleans for display
+                    for col in ['Payslip Received', 'Contract Received', 'Tax Ref Received']:
+                        if col in current_staff.columns:
+                            current_staff[col] = current_staff[col].apply(lambda x: True if str(x).lower() == 'true' else False)
+
                     st.dataframe(
-                        current_staff[['Name', 'Position', 'Salary', 'Start Date', 'Docs Received']],
+                        current_staff[['Name', 'Surname', 'ID Number', 'Position', 'Salary', 'Payslip Received', 'Contract Received', 'Tax Ref Received']],
                         hide_index=True,
                         column_config={
-                            "Docs Received": st.column_config.CheckboxColumn("Docs Received", disabled=True),
+                            "Payslip Received": st.column_config.CheckboxColumn("Payslip", disabled=True),
+                            "Contract Received": st.column_config.CheckboxColumn("Contract", disabled=True),
+                            "Tax Ref Received": st.column_config.CheckboxColumn("Tax Ref", disabled=True),
                             "Salary": st.column_config.NumberColumn(format="R %.2f")
                         }
                     )
@@ -237,38 +263,42 @@ def main():
 
                 st.divider()
 
-                # 3. Add New Employee Form
-                st.markdown("#### Add New Employee")
+                # C. Add New Employee Form
+                st.markdown("#### ➕ Add New Employee")
                 with st.form("add_emp"):
-                    c1, c2 = st.columns(2)
-                    e_name = c1.text_input("Full Name")
-                    e_pos = c2.text_input("Position (e.g., Gardener)")
+                    c1, c2, c3 = st.columns(3)
+                    e_name = c1.text_input("Name")
+                    e_sur = c2.text_input("Surname")
+                    e_id = c3.text_input("ID Number")
+
+                    c4, c5 = st.columns(2)
+                    e_pos = c4.text_input("Position")
+                    e_sal = c5.number_input("Gross Salary", min_value=0.0)
                     
-                    c3, c4 = st.columns(2)
-                    e_sal = c3.number_input("Gross Salary", min_value=0.0)
-                    e_start = c4.date_input("Start Date")
-                    
-                    e_docs = st.checkbox("Documents Received & Verified?")
+                    st.markdown("**Documents Received:**")
+                    col_a, col_b, col_c = st.columns(3)
+                    chk_pay = col_a.checkbox("Latest Payslip")
+                    chk_con = col_b.checkbox("Employment Contract")
+                    chk_tax = col_c.checkbox("Indiv Tax Number")
                     
                     if st.form_submit_button("Add Employee"):
-                        if e_name and e_pos:
-                            # Assuming add_employee signature: (complex, name, position, salary, start_date, docs_received)
-                            # You might need to adjust arguments based on your database.py
-                            add_employee(b_choice, e_name, e_pos, float(e_sal), str(e_start), e_docs)
+                        if e_name and e_sur and e_id:
+                            # IMPORTANT: Ensure your add_employee function in database.py 
+                            # is updated to accept these new arguments!
+                            # Passing: complex, name, surname, id, position, salary, payslip_bool, contract_bool, tax_bool
+                            add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
                             st.success("Employee Added")
                             st.rerun()
                         else:
-                            st.error("Name and Position are required")
+                            st.error("Name, Surname and ID are required.")
 
             # --- TAB 4: DEPARTMENT HANDOVERS ---
             with tab4:
                 st.markdown("### Department Handovers")
                 
-                # 1. Load Email Settings
                 settings = get_data("Settings")
                 s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
 
-                # 2. Define Helper
                 def render_handover_section(dept_name, db_column, email_key, custom_body=None):
                     st.markdown(f"#### {dept_name}")
                     sent_date = get_val(db_column)
@@ -295,8 +325,6 @@ def main():
                                 update_email_status(b_choice, db_column)
                                 st.rerun()
                     st.divider()
-
-                # --- RENDER SECTIONS ---
 
                 # 1. SARS
                 render_handover_section("SARS", "SARS Sent Date", "SARS")
@@ -325,7 +353,7 @@ def main():
                             st.success("Saved")
                             st.rerun()
                 
-                # External Broker
+                # Broker
                 st.markdown("**External Broker**")
                 broker_email = get_val("Insurance Broker Email")
                 b_date = get_val("Broker Email Sent Date")
@@ -342,26 +370,32 @@ def main():
                 st.markdown("**Internal Insurance Dept**")
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
 
-                # 4. Wages (UPDATED WITH AUTOMATIC STAFF LIST)
-                # Generate staff list string
-                wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- STAFF LIST ---\n"
+                # 4. Wages (UPDATED WITH NEW DETAILS)
+                wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
+                wages_body += "--- PROJECT STATUTORY NUMBERS ---\n"
+                wages_body += f"UIF: {get_val('UIF Number')}\nPAYE: {get_val('PAYE Number')}\nCOIDA: {get_val('COIDA Number')}\n\n"
+                wages_body += "--- STAFF DETAILS ---\n"
                 
-                # Get staff data again for the email
                 all_staff_email = get_data("Employees")
                 if not all_staff_email.empty:
                     c_staff = all_staff_email[all_staff_email['Complex Name'] == b_choice]
                     if not c_staff.empty:
                         for _, emp in c_staff.iterrows():
-                            # Handle checkbox boolean from Supabase
-                            is_docs = str(emp.get('Docs Received', 'False')).lower() == 'true'
-                            status = "✅ Docs Received" if is_docs else "⚠️ Docs Pending"
-                            wages_body += f"• {emp['Name']} ({emp['Position']}) - R{emp['Salary']} - {status}\n"
+                            # Parse bools
+                            has_pay = "YES" if str(emp.get('Payslip Received', False)).lower() == 'true' else "NO"
+                            has_con = "YES" if str(emp.get('Contract Received', False)).lower() == 'true' else "NO"
+                            has_tax = "YES" if str(emp.get('Tax Ref Received', False)).lower() == 'true' else "NO"
+                            
+                            wages_body += f"Employee: {emp.get('Name','')} {emp.get('Surname','')}\n"
+                            wages_body += f"ID: {emp.get('ID Number','')}\n"
+                            wages_body += f"Position: {emp.get('Position','')} | Salary: R{emp.get('Salary', 0)}\n"
+                            wages_body += f"[Docs: Payslip:{has_pay} | Contract:{has_con} | TaxRef:{has_tax}]\n\n"
                     else:
                         wages_body += "(No staff loaded on system)\n"
                 else:
                     wages_body += "(No staff loaded on system)\n"
                 
-                wages_body += "\nRegards,\nPretor Take-On Team"
+                wages_body += "Regards,\nPretor Take-On Team"
                 
                 render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
@@ -405,5 +439,6 @@ def main():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
+
 
 
