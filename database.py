@@ -58,9 +58,28 @@ def add_service_provider(complex_name, name, service, email, phone):
     supabase.table("ServiceProviders").insert({"Complex Name": complex_name, "Provider Name": name, "Service Type": service, "Email": email, "Phone": phone, "Date Emailed": ""}).execute()
     clear_cache()
 
-def add_employee(complex_name, name, surname, id_num, paye, contract, payslip, id_copy, bank_conf):
-    supabase.table("Employees").insert({"Complex Name": complex_name, "Name": name, "Surname": surname, "ID Number": id_num, "PAYE Number": paye, "Contract Received": contract, "Payslip Received": payslip, "ID Copy Received": id_copy, "Bank Confirmation": bank_conf}).execute()
-    clear_cache()
+def add_employee(complex_name, name, surname, id_num, position, salary, payslip_bool, contract_bool, tax_ref_bool):
+    """
+    Adds a new employee with the specific fields required for the wages handover.
+    """
+    data = {
+        "Complex Name": complex_name,
+        "Name": name,
+        "Surname": surname,
+        "ID Number": id_num,
+        "Position": position,
+        "Salary": salary,
+        "Payslip Received": payslip_bool,   # Boolean
+        "Contract Received": contract_bool, # Boolean
+        "Tax Ref Received": tax_ref_bool    # Boolean
+    }
+    
+    # Execute the insert
+    try:
+        supabase.table("Employees").insert(data).execute()
+    except Exception as e:
+        print(f"Error adding employee: {e}")
+        raise e
 
 def add_arrears_item(complex_name, unit, amount, attorney_name, attorney_email, attorney_phone):
     supabase.table("Arrears").insert({"Complex Name": complex_name, "Unit Number": unit, "Outstanding Amount": str(amount), "Attorney Name": attorney_name, "Attorney Email": attorney_email, "Attorney Phone": attorney_phone}).execute()
