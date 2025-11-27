@@ -217,3 +217,24 @@ def finalize_project_db(complex_name):
     supabase.table("Projects").update({"Is_Finalized": "TRUE", "Finalized Date": final_date}).eq("Complex Name", complex_name).execute()
     clear_cache()
     return final_date
+
+def update_employee_batch(edited_df):
+    """
+    Iterates through the edited dataframe and updates the records in Supabase.
+    Requires the dataframe to have an 'id' column.
+    """
+    try:
+        # Convert DataFrame to a list of dictionaries
+        records = edited_df.to_dict('records')
+        
+        for row in records:
+            # We filter by the unique ID to ensure we update the correct person
+            row_id = row.get('id')
+            if row_id:
+                # Remove 'id' from the data payload (we don't update the ID itself)
+                update_data = {k: v for k, v in row.items() if k != 'id'}
+                supabase.table("Employees").update(update_data).eq("id", row_id).execute()
+                
+        return "SUCCESS"
+    except Exception as e:
+        return str(e)
