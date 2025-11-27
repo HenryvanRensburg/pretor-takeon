@@ -459,10 +459,8 @@ def main():
                 # 2. CUSTOM COUNCIL SECTION
                 st.markdown("#### Council")
                 
-                # Fetch Council Data
                 council_data = get_data("Council")
                 
-                # --- AUTO-FIX COLUMN NAMES (Normalize Supabase to UI expectation) ---
                 if not council_data.empty:
                     rename_map = {
                         'complex_name': 'Complex Name',
@@ -474,15 +472,12 @@ def main():
                     }
                     council_data.rename(columns=rename_map, inplace=True)
                 
-                # Prepare email body
                 c_body_str = f"Dear Council Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
 
-                # Filter and Display
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     
                     if not curr_council.empty:
-                        # Editable Grid
                         st.caption("📝 Edit Account Details Below:")
                         c_cols = ['id', 'Account Number', 'Service', 'Balance']
                         c_cols = [c for c in c_cols if c in curr_council.columns]
@@ -504,7 +499,6 @@ def main():
                             st.success("Council accounts updated.")
                             st.rerun()
                         
-                        # Populate Email Body
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
@@ -516,7 +510,6 @@ def main():
                 
                 c_body_str += "\nRegards,\nPretor Take-On Team"
 
-                # Add New Account Form
                 with st.expander("➕ Add New Council Account", expanded=False):
                     with st.form("add_c_form", clear_on_submit=True):
                         c1, c2, c3 = st.columns(3)
@@ -530,7 +523,6 @@ def main():
                             st.success("Added")
                             st.rerun()
 
-                # Email Section
                 st.markdown("**Council Department Handover Status**")
                 muni_email = s_dict.get("Municipal", "")
                 c_sent_date = get_val("Council Email Sent Date")
@@ -634,7 +626,16 @@ def main():
                         st.rerun()
                 
                 st.markdown("**Internal Insurance Dept**")
-                render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
+                
+                # UPDATED: Friendly email body with path and quotation request
+                ins_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance"
+                internal_ins_body = f"Hi Insurance Team,\n\n"
+                internal_ins_body += f"Please note that {b_choice} is now being managed by Pretor.\n\n"
+                internal_ins_body += f"You can find the latest insurance policy and claims history saved at the following location:\n{ins_path}\n\n"
+                internal_ins_body += "Could you please review these documents and provide us with an insurance quotation?\n\n"
+                internal_ins_body += "Regards,\nPretor Take-On Team"
+
+                render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", custom_body=internal_ins_body)
 
                 # 5. Wages
                 wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
