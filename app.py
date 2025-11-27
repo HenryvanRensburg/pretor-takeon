@@ -146,9 +146,10 @@ def main():
             # Helper to get field safely
             def get_val(col): return str(p_row.get(col, ''))
 
-            # Tabs for cleaner UI
-            tab1, tab2, tab3 = st.tabs(["Overview", "Progress Tracker", "Department Handovers"])
+            # UPDATED: Added "Staff Details" tab
+            tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Progress Tracker", "Staff Details", "Department Handovers"])
 
+            # --- TAB 1: OVERVIEW ---
             with tab1:
                 with st.expander("Edit Details"):
                     with st.form("edit_det"):
@@ -171,6 +172,7 @@ def main():
                     with open(pdf, "rb") as f:
                         st.download_button("Download PDF", f, file_name=pdf)
 
+            # --- TAB 2: PROGRESS TRACKER ---
             with tab2:
                 st.markdown("### Checklist")
                 items = get_data("Checklist")
@@ -185,7 +187,7 @@ def main():
                         df_view = c_items
                         cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
                     
-                    # Ensure bools (Handles Supabase True/False or string "true"/"false")
+                    # Ensure bools
                     df_view['Received'] = df_view['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
                     if 'Delete' in df_view.columns:
                          df_view['Delete'] = df_view['Delete'].apply(lambda x: True if str(x).lower() == 'true' else False)
@@ -209,23 +211,69 @@ def main():
                         st.success("Saved!")
                         st.rerun()
 
+            # --- TAB 3: STAFF DETAILS (NEW) ---
             with tab3:
+                st.subheader(f"Staff List for {b_choice}")
+                
+                # 1. Fetch existing employees
+                all_staff = get_data("Employees") # Ensure 'Employees' is a valid table key
+                if not all_staff.empty:
+                    current_staff = all_staff[all_staff['Complex Name'] == b_choice]
+                else:
+                    current_staff = pd.DataFrame()
+
+                # 2. Display Staff Table
+                if not current_staff.empty:
+                    st.dataframe(
+                        current_staff[['Name', 'Position', 'Salary', 'Start Date', 'Docs Received']],
+                        hide_index=True,
+                        column_config={
+                            "Docs Received": st.column_config.CheckboxColumn("Docs Received", disabled=True),
+                            "Salary": st.column_config.NumberColumn(format="R %.2f")
+                        }
+                    )
+                else:
+                    st.info("No staff loaded yet.")
+
+                st.divider()
+
+                # 3. Add New Employee Form
+                st.markdown("#### Add New Employee")
+                with st.form("add_emp"):
+                    c1, c2 = st.columns(2)
+                    e_name = c1.text_input("Full Name")
+                    e_pos = c2.text_input("Position (e.g., Gardener)")
+                    
+                    c3, c4 = st.columns(2)
+                    e_sal = c3.number_input("Gross Salary", min_value=0.0)
+                    e_start = c4.date_input("Start Date")
+                    
+                    e_docs = st.checkbox("Documents Received & Verified?")
+                    
+                    if st.form_submit_button("Add Employee"):
+                        if e_name and e_pos:
+                            # Assuming add_employee signature: (complex, name, position, salary, start_date, docs_received)
+                            # You might need to adjust arguments based on your database.py
+                            add_employee(b_choice, e_name, e_pos, float(e_sal), str(e_start), e_docs)
+                            st.success("Employee Added")
+                            st.rerun()
+                        else:
+                            st.error("Name and Position are required")
+
+            # --- TAB 4: DEPARTMENT HANDOVERS ---
+            with tab4:
                 st.markdown("### Department Handovers")
                 
                 # 1. Load Email Settings
                 settings = get_data("Settings")
-                # Create a lookup dictionary: {'Wages': 'wages@pretor.co.za', ...}
                 s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
 
-                # 2. Define a helper to render each section consistently
+                # 2. Define Helper
                 def render_handover_section(dept_name, db_column, email_key, custom_body=None):
                     st.markdown(f"#### {dept_name}")
-                    
-                    # Check current status in DB
                     sent_date = get_val(db_column)
                     target_email = s_dict.get(email_key, "")
                     
-                    # Status Indicator
                     if sent_date and sent_date != "None":
                         st.success(f"✅ Sent on: {sent_date}")
                         if st.button(f"Reset {dept_name}", key=f"rst_{dept_name}"):
@@ -233,10 +281,7 @@ def main():
                             st.rerun()
                     else:
                         st.info(f"Pending | Target: {target_email if target_email else 'No Email Set'}")
-                        
                         col_a, col_b = st.columns([1, 1])
-                        
-                        # A: Draft Email Link
                         with col_a:
                             if target_email:
                                 subject = urllib.parse.quote(f"Handover: {b_choice} - {dept_name}")
@@ -245,8 +290,6 @@ def main():
                                 st.markdown(link, unsafe_allow_html=True)
                             else:
                                 st.warning("⚠️ Set Email in Global Settings")
-
-                        # B: Mark as Sent Button
                         with col_b:
                             if st.button(f"Mark {dept_name} Sent", key=f"btn_{dept_name}"):
                                 update_email_status(b_choice, db_column)
@@ -258,21 +301,20 @@ def main():
                 # 1. SARS
                 render_handover_section("SARS", "SARS Sent Date", "SARS")
 
-                # 2. Council (Has extra feature: Add Account)
+                # 2. Council
                 st.markdown("#### Council")
-                with st.expander("➕ Add Council Account Details (Optional)"):
+                with st.expander("➕ Add Council Account Details"):
                     with st.form("add_c_new"):
                         an = st.text_input("Acc Number")
-                        sv = st.text_input("Service (e.g., Water/Elec)")
+                        sv = st.text_input("Service")
                         bl = st.number_input("Balance")
                         if st.form_submit_button("Add Account"):
                             add_council_account(b_choice, an, sv, bl)
                             st.success("Added")
                             st.rerun()
-                # Render the email part for Council
                 render_handover_section("Council", "Council Email Sent Date", "Municipal")
 
-                # 3. Insurance (Has extra feature: Broker Details)
+                # 3. Insurance
                 st.markdown("#### Insurance")
                 with st.expander("📝 Edit Broker Details"):
                     with st.form("brok_new"):
@@ -283,10 +325,9 @@ def main():
                             st.success("Saved")
                             st.rerun()
                 
-                # Broker Email
-                broker_email = get_val("Insurance Broker Email")
-                # We handle Broker manually because the email comes from the Project, not Global Settings
+                # External Broker
                 st.markdown("**External Broker**")
+                broker_email = get_val("Insurance Broker Email")
                 b_date = get_val("Broker Email Sent Date")
                 if b_date and b_date != "None":
                     st.success(f"Sent: {b_date}")
@@ -297,26 +338,44 @@ def main():
                         st.markdown(lnk, unsafe_allow_html=True)
                     if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.rerun()
                 
-                # Internal Insurance Email
+                # Internal Insurance
                 st.markdown("**Internal Insurance Dept**")
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
 
-                # 4. Wages (New!)
-                render_handover_section("Wages", "Wages Sent Date", "Wages")
+                # 4. Wages (UPDATED WITH AUTOMATIC STAFF LIST)
+                # Generate staff list string
+                wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- STAFF LIST ---\n"
+                
+                # Get staff data again for the email
+                all_staff_email = get_data("Employees")
+                if not all_staff_email.empty:
+                    c_staff = all_staff_email[all_staff_email['Complex Name'] == b_choice]
+                    if not c_staff.empty:
+                        for _, emp in c_staff.iterrows():
+                            # Handle checkbox boolean from Supabase
+                            is_docs = str(emp.get('Docs Received', 'False')).lower() == 'true'
+                            status = "✅ Docs Received" if is_docs else "⚠️ Docs Pending"
+                            wages_body += f"• {emp['Name']} ({emp['Position']}) - R{emp['Salary']} - {status}\n"
+                    else:
+                        wages_body += "(No staff loaded on system)\n"
+                else:
+                    wages_body += "(No staff loaded on system)\n"
+                
+                wages_body += "\nRegards,\nPretor Take-On Team"
+                
+                render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
-                # 5. Debt Collection (New!)
+                # 5. Debt Collection
                 render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
 
-                # 6. Accounts (New!)
+                # 6. Accounts
                 render_handover_section("Accounts", "Accounts Sent Date", "Accounts")
 
-                # 7. Fee Confirmation (Project Manager)
+                # 7. Fee Confirmation
                 st.markdown("#### Fee Confirmation")
                 pm_email = get_val("Manager Email")
-                # Custom body for fees
                 fee_body = f"Please confirm the management fees for {b_choice}.\n\nAgreed Fees: {get_val('Mgmt Fees')}"
                 
-                # Manually render Fee section as it uses PM email, not Global Settings
                 f_date = get_val("Fee Confirmation Email Sent Date")
                 if f_date and f_date != "None":
                     st.success(f"Sent: {f_date}")
@@ -335,7 +394,7 @@ def main():
 
                 st.divider()
 
-                # 8. Client Update & Finalize
+                # 8. Finalize
                 st.markdown("### 🏁 Final Actions")
                 c1, c2 = st.columns(2)
                 with c1:
@@ -346,4 +405,5 @@ def main():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
+
 
