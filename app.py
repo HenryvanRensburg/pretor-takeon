@@ -211,26 +211,50 @@ def main():
                         st.success("Saved!")
                         st.rerun()
 
-            # --- TAB 3: STAFF DETAILS (UPDATED) ---
+            # --- TAB 3: STAFF DETAILS (LOCKED VERSION) ---
             with tab3:
                 st.subheader(f"Staff Management: {b_choice}")
                 
                 # A. Statutory Numbers (Project Level)
                 st.markdown("#### 🏢 Project Statutory Numbers")
-                with st.form("stat_nums"):
+                
+                # 1. Get current values
+                uif_val = get_val("UIF Number")
+                paye_val = get_val("PAYE Number")
+                coida_val = get_val("COIDA Number")
+
+                # 2. Check if data exists (Handle "None", "nan", or empty strings)
+                def is_filled(val):
+                    return val and str(val).lower() not in ["none", "nan", ""]
+
+                # If ANY of these have data, we treat the section as locked
+                # (You can change 'or' to 'and' if you only want to lock when ALL are full)
+                locked = is_filled(uif_val) or is_filled(paye_val) or is_filled(coida_val)
+
+                if locked:
+                    st.success("🔒 Statutory details are locked and cannot be edited.")
+                    # Display as disabled inputs so they can be read but not changed
                     c1, c2, c3 = st.columns(3)
-                    uif_n = c1.text_input("UIF Number", value=get_val("UIF Number"))
-                    paye_n = c2.text_input("PAYE Number", value=get_val("PAYE Number"))
-                    coida_n = c3.text_input("COIDA / Workmens Comp", value=get_val("COIDA Number"))
-                    
-                    if st.form_submit_button("Save Statutory Numbers"):
-                        update_building_details_batch(b_choice, {
-                            "UIF Number": uif_n,
-                            "PAYE Number": paye_n,
-                            "COIDA Number": coida_n
-                        })
-                        st.success("Statutory details saved.")
-                        st.rerun()
+                    c1.text_input("UIF Number", value=uif_val, disabled=True, key="uif_lock")
+                    c2.text_input("PAYE Number", value=paye_val, disabled=True, key="paye_lock")
+                    c3.text_input("COIDA / Workmens Comp", value=coida_val, disabled=True, key="coida_lock")
+                else:
+                    # Display Editable Form
+                    st.info("ℹ️ Please enter these details carefully. Once saved, they will be locked.")
+                    with st.form("stat_nums"):
+                        c1, c2, c3 = st.columns(3)
+                        uif_n = c1.text_input("UIF Number", value=uif_val)
+                        paye_n = c2.text_input("PAYE Number", value=paye_val)
+                        coida_n = c3.text_input("COIDA / Workmens Comp", value=coida_val)
+                        
+                        if st.form_submit_button("💾 Save & Lock Statutory Numbers"):
+                            update_building_details_batch(b_choice, {
+                                "UIF Number": uif_n,
+                                "PAYE Number": paye_n,
+                                "COIDA Number": coida_n
+                            })
+                            st.success("Statutory details saved and locked.")
+                            st.rerun()
 
                 st.divider()
 
@@ -283,15 +307,12 @@ def main():
                     
                     if st.form_submit_button("Add Employee"):
                         if e_name and e_sur and e_id:
-                            # IMPORTANT: Ensure your add_employee function in database.py 
-                            # is updated to accept these new arguments!
-                            # Passing: complex, name, surname, id, position, salary, payslip_bool, contract_bool, tax_bool
+                            # Verify your database.py add_employee function matches this signature
                             add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
                             st.success("Employee Added")
                             st.rerun()
                         else:
                             st.error("Name, Surname and ID are required.")
-
             # --- TAB 4: DEPARTMENT HANDOVERS ---
             with tab4:
                 st.markdown("### Department Handovers")
@@ -439,6 +460,7 @@ def main():
 # --- ENTRY POINT ---
 if __name__ == "__main__":
     main()
+
 
 
 
