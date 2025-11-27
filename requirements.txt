@@ -1,6 +1,5 @@
 streamlit
 pandas
 fpdf
-gspread
-google-auth
+supabase
 python-dateutil
