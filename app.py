@@ -413,6 +413,53 @@ def main():
                 settings = get_data("Settings")
                 s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
 
+                # 1. Custom SARS Section
+                st.markdown("#### SARS")
+                sars_email = s_dict.get("SARS", "")
+                sars_sent_date = get_val("SARS Sent Date")
+                
+                # LOGIC: If date exists, show RESET button. If not, show SEND controls.
+                if sars_sent_date and sars_sent_date != "None":
+                    st.success(f"✅ Sent on: {sars_sent_date}")
+                    if st.button("Reset SARS", key="rst_sars_cust"):
+                        update_email_status(b_choice, "SARS Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    # ONLY VISIBLE IF NOT SENT YET
+                    tax_num = get_val("Tax Number")
+                    sars_body = f"Dear SARS Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
+                    
+                    has_tax_num = tax_num and str(tax_num).lower() not in ['none', 'nan', '']
+                    
+                    if has_tax_num:
+                        st.success(f"📌 **Confirmed Tax Number:** {tax_num}")
+                        sars_body += f"Confirmed Tax Number: {tax_num}\n\n"
+                    else:
+                        st.warning("⚠️ No Tax Number on file.")
+                        sars_option = st.radio("Select Status for Email:", ["Awaiting Tax Number", "Please Register Scheme"], key="sars_rad")
+                        sars_body += f"Note regarding Tax Number: {sars_option}\n\n"
+                    
+                    sars_body += "Regards,\nPretor Take-On Team"
+                    
+                    col_s1, col_s2 = st.columns([1,1])
+                    with col_s1:
+                        if sars_email:
+                            s_sub = urllib.parse.quote(f"Handover: {b_choice} - SARS")
+                            s_bod = urllib.parse.quote(sars_body)
+                            lnk = f'<a href="mailto:{sars_email}?subject={s_sub}&body={s_bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                            st.markdown(lnk, unsafe_allow_html=True)
+                        else:
+                            st.warning("Set SARS Email in Global Settings")
+                    
+                    with col_s2:
+                        if st.button("Mark SARS Sent", key="btn_sars_cust"):
+                            update_email_status(b_choice, "SARS Sent Date")
+                            st.cache_data.clear()
+                            st.rerun()
+                st.divider()
+
+                # 2. Generic Function for other departments
                 def render_handover_section(dept_name, db_column, email_key, custom_body=None):
                     st.markdown(f"#### {dept_name}")
                     sent_date = get_val(db_column)
@@ -442,10 +489,7 @@ def main():
                                 st.rerun()
                     st.divider()
 
-                # 1. SARS
-                render_handover_section("SARS", "SARS Sent Date", "SARS")
-
-                # 2. Council
+                # 3. Council
                 st.markdown("#### Council")
                 with st.expander("➕ Add Council Account Details"):
                     with st.form("add_c_new"):
@@ -459,7 +503,7 @@ def main():
                             st.rerun()
                 render_handover_section("Council", "Council Email Sent Date", "Municipal")
 
-                # 3. Insurance
+                # 4. Insurance
                 st.markdown("#### Insurance")
                 with st.expander("📝 Edit Broker Details"):
                     with st.form("brok_new"):
@@ -489,7 +533,7 @@ def main():
                 st.markdown("**Internal Insurance Dept**")
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
 
-                # 4. Wages
+                # 5. Wages
                 wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
                 wages_body += "--- PROJECT STATUTORY NUMBERS ---\n"
                 wages_body += f"UIF: {get_val('UIF Number')}\nPAYE: {get_val('PAYE Number')}\nCOIDA: {get_val('COIDA Number')}\n\n"
@@ -517,13 +561,13 @@ def main():
                 
                 render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
-                # 5. Debt Collection
+                # 6. Debt Collection
                 render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
 
-                # 6. Accounts
+                # 7. Accounts
                 render_handover_section("Accounts", "Accounts Sent Date", "Accounts")
 
-                # 7. Fee Confirmation
+                # 8. Fee Confirmation
                 st.markdown("#### Fee Confirmation")
                 pm_email = get_val("Manager Email")
                 fee_body = f"Please confirm the management fees for {b_choice}.\n\nAgreed Fees: {get_val('Mgmt Fees')}"
@@ -547,7 +591,7 @@ def main():
 
                 st.divider()
 
-                # 8. Finalize
+                # 9. Finalize
                 st.markdown("### 🏁 Final Actions")
                 c1, c2 = st.columns(2)
                 with c1:
