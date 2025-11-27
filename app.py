@@ -157,45 +157,83 @@ def main():
                 st.subheader(f"Project Overview: {b_choice}")
                 
                 with st.form("project_overview_form"):
-                    st.markdown("#### 📝 Building Details")
                     st.caption("Fields with existing data are locked 🔒. Please fill in any missing details.")
                     
                     def smart_input(label, col_name, col_obj=st):
                         curr_val = str(p_row.get(col_name, ''))
-                        # FIX: Enforce boolean result for 'disabled'
                         has_data = bool(curr_val and curr_val.lower() not in ["none", "nan", ""])
-                        
                         return col_obj.text_input(
                             label, 
                             value=curr_val if has_data else "", 
                             disabled=has_data,
                             key=f"ov_{col_name}",
-                            placeholder="Enter missing detail..."
+                            placeholder="Enter detail..."
                         )
 
+                    # --- SECTION 1: GENERAL & ADDRESS ---
+                    st.markdown("#### 📍 General & Address")
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         u_code = smart_input("Building Code", "Building Code", c1)
                         u_type = smart_input("Type (BC/HOA)", "Type", c1)
-                        u_units = smart_input("No of Units", "No of Units", c1)
-                    
                     with c2:
-                        u_ye = smart_input("Year End", "Year End", c2)
-                        u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c2)
-                        u_tod = smart_input("Take On Date", "Take On Date", c2)
-                    
+                        u_units = smart_input("No of Units", "No of Units", c2)
+                        u_ss = smart_input("SS Number", "SS Number", c2)
                     with c3:
-                        u_man = smart_input("Portfolio Manager", "Assigned Manager", c3)
-                        u_mail = smart_input("Manager Email", "Manager Email", c3)
-                        u_tom = smart_input("Take-On Manager", "TakeOn Name", c3)
+                        u_erf = smart_input("Erf Number", "Erf Number", c3)
+                        u_csos = smart_input("CSOS Number", "CSOS Number", c3)
+                    
+                    st.markdown("")
+                    u_addr = smart_input("Physical Address", "Physical Address", st)
+
+                    # --- SECTION 2: FINANCIAL & COMPLIANCE ---
+                    st.divider()
+                    st.markdown("#### 💰 Financial & Compliance")
+                    c4, c5, c6 = st.columns(3)
+                    with c4:
+                        u_ye = smart_input("Year End", "Year End", c4)
+                        u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c4)
+                        u_exp = smart_input("Expense Code", "Expense Code", c4)
+                    with c5:
+                        u_vat = smart_input("VAT Number", "VAT Number", c5)
+                        u_tax = smart_input("Tax Number", "Tax Number", c5)
+                        u_tod = smart_input("Take On Date", "Take On Date", c5)
+                    with c6:
+                        u_aud = smart_input("Auditor", "Auditor", c6)
+                        u_last_aud = smart_input("Last Audit", "Last Audit", c6)
+
+                    # --- SECTION 3: THE TEAM ---
+                    st.divider()
+                    st.markdown("#### 👥 The Team")
+                    c7, c8, c9 = st.columns(3)
+                    with c7:
+                        u_pm = smart_input("Portfolio Manager", "Assigned Manager", c7)
+                        u_pm_e = smart_input("PM Email", "Manager Email", c7)
+                        u_client_e = smart_input("Client Email", "Client Email", c7)
+                    with c8:
+                        u_pa = smart_input("Portfolio Assistant", "Portfolio Assistant", c8)
+                        u_pa_e = smart_input("PA Email", "Portfolio Assistant Email", c8)
+                        u_tom = smart_input("Take-On Manager", "TakeOn Name", c8)
+                    with c9:
+                        u_bk = smart_input("Bookkeeper", "Bookkeeper", c9)
+                        u_bk_e = smart_input("Bookkeeper Email", "Bookkeeper Email", c9)
 
                     st.markdown("---")
                     
                     if st.form_submit_button("💾 Save Missing Details"):
                         updates = {
+                            # General
                             "Building Code": u_code, "Type": u_type, "No of Units": u_units,
-                            "Year End": u_ye, "Mgmt Fees": u_fees, "Take On Date": u_tod,
-                            "Assigned Manager": u_man, "Manager Email": u_mail, "TakeOn Name": u_tom
+                            "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos,
+                            "Physical Address": u_addr,
+                            # Financial
+                            "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp,
+                            "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod,
+                            "Auditor": u_aud, "Last Audit": u_last_aud,
+                            # Team
+                            "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e,
+                            "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom,
+                            "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e
                         }
                         update_building_details_batch(b_choice, updates)
                         st.cache_data.clear()
