@@ -81,9 +81,23 @@ def add_employee(complex_name, name, surname, id_num, position, salary, payslip_
         print(f"Error adding employee: {e}")
         raise e
 
-def add_arrears_item(complex_name, unit, amount, attorney_name, attorney_email, attorney_phone):
-    supabase.table("Arrears").insert({"Complex Name": complex_name, "Unit Number": unit, "Outstanding Amount": str(amount), "Attorney Name": attorney_name, "Attorney Email": attorney_email, "Attorney Phone": attorney_phone}).execute()
-    clear_cache()
+def add_arrears_item(complex_name, unit, amount, att_name, att_email, att_phone):
+    """
+    Adds a new arrears record to the database.
+    """
+    data = {
+        "Complex Name": complex_name,
+        "Unit Number": unit,
+        "Outstanding Amount": amount,
+        "Attorney Name": att_name,
+        "Attorney Email": att_email,
+        "Attorney Phone": att_phone
+    }
+    try:
+        supabase.table("Arrears").insert(data).execute()
+    except Exception as e:
+        print(f"Error adding arrears: {e}")
+        raise e
 
 def add_council_account(complex_name, account_num, service, balance):
     supabase.table("CouncilAccounts").insert({"Complex Name": complex_name, "Account Number": account_num, "Service Covered": service, "Current Balance": str(balance)}).execute()
@@ -259,24 +273,6 @@ def update_council_batch(edited_df):
         return "SUCCESS"
     except Exception as e:
         return str(e)
-
-def add_arrears_item(complex_name, unit, amount, att_name, att_email, att_phone):
-    """
-    Adds a new arrears record to the database.
-    """
-    data = {
-        "Complex Name": complex_name,
-        "Unit Number": unit,
-        "Outstanding Amount": amount,
-        "Attorney Name": att_name,
-        "Attorney Email": att_email,
-        "Attorney Phone": att_phone
-    }
-    try:
-        supabase.table("Arrears").insert(data).execute()
-    except Exception as e:
-        print(f"Error adding arrears: {e}")
-        raise e
 
 def update_arrears_batch(edited_df):
     """
