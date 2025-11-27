@@ -5,7 +5,7 @@ from database import (
     add_council_account, add_trustee, delete_record_by_match, save_global_settings, 
     update_building_details_batch, create_new_building, update_project_agent_details, 
     save_checklist_batch, finalize_project_db, save_broker_details, update_email_status, 
-    update_service_provider_date, update_wages_status, update_employee_batch
+    update_service_provider_date, update_wages_status, update_employee_batch, update_council_batch
 )
 from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
@@ -170,7 +170,6 @@ def main():
                             placeholder="Enter detail..."
                         )
 
-                    # --- SECTION 1: GENERAL & ADDRESS ---
                     st.markdown("#### 📍 General & Address")
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -186,7 +185,6 @@ def main():
                     st.markdown("")
                     u_addr = smart_input("Physical Address", "Physical Address", st)
 
-                    # --- SECTION 2: FINANCIAL & COMPLIANCE ---
                     st.divider()
                     st.markdown("#### 💰 Financial & Compliance")
                     c4, c5, c6 = st.columns(3)
@@ -202,7 +200,6 @@ def main():
                         u_aud = smart_input("Auditor", "Auditor", c6)
                         u_last_aud = smart_input("Last Audit", "Last Audit", c6)
 
-                    # --- SECTION 3: THE TEAM ---
                     st.divider()
                     st.markdown("#### 👥 The Team")
                     c7, c8, c9 = st.columns(3)
@@ -222,15 +219,12 @@ def main():
                     
                     if st.form_submit_button("💾 Save Missing Details"):
                         updates = {
-                            # General
                             "Building Code": u_code, "Type": u_type, "No of Units": u_units,
                             "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos,
                             "Physical Address": u_addr,
-                            # Financial
                             "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp,
                             "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod,
                             "Auditor": u_aud, "Last Audit": u_last_aud,
-                            # Team
                             "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e,
                             "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom,
                             "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e
@@ -418,7 +412,6 @@ def main():
                 sars_email = s_dict.get("SARS", "")
                 sars_sent_date = get_val("SARS Sent Date")
                 
-                # LOGIC: If date exists, show RESET button. If not, show SEND controls.
                 if sars_sent_date and sars_sent_date != "None":
                     st.success(f"✅ Sent on: {sars_sent_date}")
                     if st.button("Reset SARS", key="rst_sars_cust"):
@@ -426,10 +419,8 @@ def main():
                         st.cache_data.clear()
                         st.rerun()
                 else:
-                    # ONLY VISIBLE IF NOT SENT YET
                     tax_num = get_val("Tax Number")
                     sars_body = f"Dear SARS Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
-                    
                     has_tax_num = tax_num and str(tax_num).lower() not in ['none', 'nan', '']
                     
                     if has_tax_num:
@@ -489,19 +480,74 @@ def main():
                                 st.rerun()
                     st.divider()
 
-                # 3. Council
+                # 3. Council (UPDATED: Fully Editable Grid)
                 st.markdown("#### Council")
-                with st.expander("➕ Add Council Account Details"):
-                    with st.form("add_c_new"):
-                        an = st.text_input("Acc Number")
-                        sv = st.text_input("Service")
-                        bl = st.number_input("Balance")
+                
+                # Fetch Council Accounts
+                council_data = get_data("Council") # Ensure table "Council" exists
+                
+                # Generate Email Body string for Council
+                c_body_str = f"Dear Council Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
+                
+                if not council_data.empty:
+                    if 'Complex Name' in council_data.columns:
+                        curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
+                        
+                        if not curr_council.empty:
+                             # Display Editable Grid
+                            st.caption("Existing Accounts (Editable):")
+                            
+                            # Define visible columns
+                            c_cols = ['id', 'Account Number', 'Service', 'Balance']
+                            c_cols = [c for c in c_cols if c in curr_council.columns]
+                            
+                            edited_council = st.data_editor(
+                                curr_council[c_cols],
+                                hide_index=True,
+                                use_container_width=True,
+                                column_config={
+                                    "id": st.column_config.Column(disabled=True, width="small"),
+                                    "Balance": st.column_config.NumberColumn(format="R %.2f")
+                                },
+                                key="council_editor"
+                            )
+                            
+                            if st.button("💾 Save Changes to Accounts"):
+                                update_council_batch(edited_council)
+                                st.cache_data.clear()
+                                st.success("Council accounts updated.")
+                                st.rerun()
+
+                            # Add to email body
+                            for _, acc in curr_council.iterrows():
+                                c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
+                        else:
+                            st.info("No accounts loaded yet.")
+                            c_body_str += "(No accounts loaded)\n"
+                    else:
+                        st.error("Error: 'Complex Name' missing in Council table.")
+                else:
+                    st.info("No council data found.")
+                    c_body_str += "(No accounts loaded)\n"
+                
+                c_body_str += "\nRegards,\nPretor Take-On Team"
+
+                # Add New Account Form (Auto-Clear)
+                with st.expander("➕ Add New Council Account", expanded=False):
+                    with st.form("add_c_form", clear_on_submit=True):
+                        c1, c2, c3 = st.columns(3)
+                        an = c1.text_input("Acc Number", key="new_c_an")
+                        sv = c2.text_input("Service", key="new_c_sv")
+                        bl = c3.number_input("Balance", key="new_c_bl")
+                        
                         if st.form_submit_button("Add Account"):
                             add_council_account(b_choice, an, sv, bl)
                             st.cache_data.clear()
                             st.success("Added")
                             st.rerun()
-                render_handover_section("Council", "Council Email Sent Date", "Municipal")
+                
+                # Render Email Section passing the generated body
+                render_handover_section("Council", "Council Email Sent Date", "Municipal", custom_body=c_body_str)
 
                 # 4. Insurance
                 st.markdown("#### Insurance")
