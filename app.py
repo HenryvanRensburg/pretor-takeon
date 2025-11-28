@@ -5,7 +5,8 @@ from database import (
     add_council_account, add_trustee, delete_record_by_match, save_global_settings, 
     update_building_details_batch, create_new_building, update_project_agent_details, 
     save_checklist_batch, finalize_project_db, save_broker_details, update_email_status, 
-    update_service_provider_date, update_wages_status, update_employee_batch, update_council_batch, update_arrears_batch
+    update_service_provider_date, update_wages_status, update_employee_batch, 
+    update_council_batch, update_arrears_batch
 )
 from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
@@ -146,7 +147,7 @@ def main():
             st.divider()
             sub_nav = st.radio(
                 "Section Navigation", 
-                ["Overview", "Progress Tracker", "Staff Details", "Department Handovers"], 
+                ["Overview", "Progress Tracker", "Staff Details", "Arrears Details", "Department Handovers"], 
                 horizontal=True,
                 label_visibility="collapsed"
             )
@@ -222,15 +223,12 @@ def main():
                     
                     if st.form_submit_button("💾 Save Missing Details"):
                         updates = {
-                            # General
                             "Building Code": u_code, "Type": u_type, "No of Units": u_units,
                             "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos,
                             "Physical Address": u_addr,
-                            # Financial
                             "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp,
                             "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod,
                             "Auditor": u_aud, "Last Audit": u_last_aud,
-                            # Team
                             "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e,
                             "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom,
                             "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e
@@ -406,7 +404,80 @@ def main():
                         else:
                             st.error("Name, Surname and ID are required.")
 
-            # --- SUB SECTION 4: DEPARTMENT HANDOVERS ---
+            # --- SUB SECTION 4: ARREARS DETAILS (NEW) ---
+            elif sub_nav == "Arrears Details":
+                st.subheader(f"Arrears Management: {b_choice}")
+                st.markdown("Manage the list of units with outstanding levies below.")
+                
+                arrears_data = get_data("Arrears")
+                
+                # Auto-fix column names for Arrears
+                if not arrears_data.empty:
+                    rename_map_arr = {
+                        'complex_name': 'Complex Name',
+                        'unit_number': 'Unit Number',
+                        'outstanding_amount': 'Outstanding Amount',
+                        'attorney_name': 'Attorney Name',
+                        'attorney_email': 'Attorney Email',
+                        'attorney_phone': 'Attorney Phone',
+                        'Complex_Name': 'Complex Name'
+                    }
+                    arrears_data.rename(columns=rename_map_arr, inplace=True)
+
+                if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
+                    curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
+                    
+                    if not curr_arrears.empty:
+                        st.markdown("#### 📝 Arrears List (Editable)")
+                        
+                        arr_cols = ['id', 'Unit Number', 'Outstanding Amount', 'Attorney Name', 'Attorney Email', 'Attorney Phone']
+                        arr_cols = [c for c in arr_cols if c in curr_arrears.columns]
+                        
+                        edited_arrears = st.data_editor(
+                            curr_arrears[arr_cols],
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "id": st.column_config.Column(disabled=True, width="small"),
+                                "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f"),
+                                "Unit Number": st.column_config.TextColumn("Unit No")
+                            },
+                            key="arrears_editor"
+                        )
+                        
+                        if st.button("💾 Save Changes to Arrears"):
+                            update_arrears_batch(edited_arrears)
+                            st.cache_data.clear()
+                            st.success("Arrears updated.")
+                            st.rerun()
+                    else:
+                        st.info("No arrears loaded yet.")
+                else:
+                    st.info("No arrears data available.")
+
+                st.divider()
+
+                with st.expander("➕ Add New Arrears Record", expanded=True):
+                    with st.form("add_arr_form", clear_on_submit=True):
+                        c1, c2 = st.columns(2)
+                        a_unit = c1.text_input("Unit Number", key="new_a_u")
+                        a_amt = c2.number_input("Outstanding Amount", min_value=0.0, key="new_a_a")
+                        
+                        c3, c4, c5 = st.columns(3)
+                        a_att = c3.text_input("Attorney Name", key="new_a_n")
+                        a_mail = c4.text_input("Attorney Email", key="new_a_e")
+                        a_ph = c5.text_input("Attorney Phone", key="new_a_p")
+                        
+                        if st.form_submit_button("Add Record"):
+                            if a_unit:
+                                add_arrears_item(b_choice, a_unit, a_amt, a_att, a_mail, a_ph)
+                                st.cache_data.clear()
+                                st.success("Added")
+                                st.rerun()
+                            else:
+                                st.error("Unit Number required")
+
+            # --- SUB SECTION 5: DEPARTMENT HANDOVERS ---
             elif sub_nav == "Department Handovers":
                 st.markdown("### Department Handovers")
                 
@@ -666,11 +737,9 @@ def main():
                 
                 render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
-                # 6. Debt Collection (UPDATED)
-                st.markdown("#### Debt Collection")
-                
+                # 6. Debt Collection (HANDOVER ONLY - DATA IS IN ARREARS DETAILS TAB)
+                # Fetch Data just for the email body construction
                 arrears_data = get_data("Arrears")
-                
                 if not arrears_data.empty:
                     rename_map_arr = {
                         'complex_name': 'Complex Name',
@@ -687,65 +756,22 @@ def main():
                 
                 if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
                     curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
-                    
                     if not curr_arrears.empty:
-                        st.caption("📝 Edit Arrears Details Below:")
-                        
-                        arr_cols = ['id', 'Unit Number', 'Outstanding Amount', 'Attorney Name', 'Attorney Email', 'Attorney Phone']
-                        arr_cols = [c for c in arr_cols if c in curr_arrears.columns]
-                        
-                        edited_arrears = st.data_editor(
-                            curr_arrears[arr_cols],
-                            hide_index=True,
-                            use_container_width=True,
-                            column_config={
-                                "id": st.column_config.Column(disabled=True, width="small"),
-                                "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f"),
-                                "Unit Number": st.column_config.TextColumn("Unit No")
-                            },
-                            key="arrears_editor"
-                        )
-                        
-                        if st.button("💾 Save Changes to Arrears"):
-                            update_arrears_batch(edited_arrears)
-                            st.cache_data.clear()
-                            st.success("Arrears updated.")
-                            st.rerun()
-                        
                         for _, row in curr_arrears.iterrows():
                             dc_body += f"Unit: {row.get('Unit Number', '')} | Amt: R{row.get('Outstanding Amount', 0)}\n"
                             dc_body += f"   Attorney: {row.get('Attorney Name', 'None')} ({row.get('Attorney Email', '')} - {row.get('Attorney Phone', '')})\n"
                             dc_body += "   ----------------------------\n"
                     else:
-                        st.info("No arrears loaded yet.")
                         dc_body += "(No arrears loaded)\n"
                 else:
-                    st.info("No arrears data available.")
                     dc_body += "(No arrears loaded)\n"
                 
                 dc_body += "\nRegards,\nPretor Take-On Team"
 
-                with st.expander("➕ Add New Arrears Record", expanded=False):
-                    with st.form("add_arr_form", clear_on_submit=True):
-                        c1, c2 = st.columns(2)
-                        a_unit = c1.text_input("Unit Number", key="new_a_u")
-                        a_amt = c2.number_input("Outstanding Amount", min_value=0.0, key="new_a_a")
-                        
-                        c3, c4, c5 = st.columns(3)
-                        a_att = c3.text_input("Attorney Name", key="new_a_n")
-                        a_mail = c4.text_input("Attorney Email", key="new_a_e")
-                        a_ph = c5.text_input("Attorney Phone", key="new_a_p")
-                        
-                        if st.form_submit_button("Add Record"):
-                            if a_unit:
-                                add_arrears_item(b_choice, a_unit, a_amt, a_att, a_mail, a_ph)
-                                st.cache_data.clear()
-                                st.success("Added")
-                                st.rerun()
-                            else:
-                                st.error("Unit Number required")
-
                 render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
+
+                # 7. Accounts
+                # Removed as requested
 
                 # 8. Fee Confirmation
                 st.markdown("#### Fee Confirmation")
