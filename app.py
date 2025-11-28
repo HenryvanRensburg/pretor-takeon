@@ -252,7 +252,7 @@ def main():
                     with open(pdf, "rb") as f:
                         st.download_button("Download PDF", f, file_name=pdf)
 
-            # --- SUB SECTION 2: PROGRESS TRACKER (UPDATED) ---
+            # --- SUB SECTION 2: PROGRESS TRACKER (SPLIT VIEW) ---
             elif sub_nav == "Progress Tracker":
                 st.markdown("### Checklist")
                 
@@ -260,56 +260,88 @@ def main():
                 if not items.empty:
                     c_items = items[items['Complex Name'] == b_choice].copy()
                     
-                    # Convert 'Received' to strict boolean
+                    # Safe boolean conversion
                     c_items['Received'] = c_items['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
                     if 'Delete' in c_items.columns:
                         c_items['Delete'] = c_items['Delete'].apply(lambda x: True if str(x).lower() == 'true' else False)
 
-                    # --- SPLIT INTO PENDING AND COMPLETED ---
-                    # 1. Pending (Editable) - Received is False and Not Deleted
+                    # 1. PENDING (Actionable)
                     df_pending = c_items[(c_items['Received'] == False) & (c_items['Delete'] != True)]
                     
-                    # 2. Completed (Locked) - Received is True OR Deleted is True
+                    # 2. COMPLETED (Locked)
                     df_completed = c_items[(c_items['Received'] == True) | (c_items['Delete'] == True)]
 
-                    # --- RENDER PENDING (EDITABLE) ---
-                    st.markdown("#### 📝 Actions Required")
-                    if not df_pending.empty:
-                        # Sorter
-                        sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
-                        df_pending['Sort'] = df_pending['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
-                        df_pending = df_pending.sort_values(by=['Sort', 'Task Name'])
+                    # --- TABS FOR PENDING ITEMS ---
+                    t1, t2 = st.tabs(["① Previous Agent Actions", "② Internal Actions"])
+                    
+                    # Helper for Sorting
+                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
+                    
+                    # TAB 1: PREVIOUS AGENT
+                    with t1:
+                        if not df_pending.empty:
+                            agent_pending = df_pending[df_pending['Responsibility'].isin(['Previous Agent', 'Both'])].copy()
+                            if not agent_pending.empty:
+                                agent_pending['Sort'] = agent_pending['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
+                                agent_pending = agent_pending.sort_values(by=['Sort', 'Task Name'])
+                                
+                                edited_agent = st.data_editor(
+                                    agent_pending[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']],
+                                    hide_index=True,
+                                    height=400,
+                                    key="agent_editor",
+                                    column_config={
+                                        "id": None,
+                                        "Task Heading": st.column_config.TextColumn(disabled=True),
+                                        "Task Name": st.column_config.TextColumn(disabled=True)
+                                    }
+                                )
+                                if st.button("Save Agent Items"):
+                                    save_checklist_batch(b_choice, edited_agent)
+                                    st.cache_data.clear()
+                                    st.success("Saved!")
+                                    st.rerun()
+                            else:
+                                st.info("No pending items for Previous Agent.")
+                        else:
+                            st.info("No pending items.")
 
-                        # IMPORTANT: Include 'id' in columns so we can save!
-                        cols_editable = ['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']
-                        
-                        edited = st.data_editor(
-                            df_pending[cols_editable], 
-                            hide_index=True, 
-                            height=400,
-                            key="pending_editor",
-                            column_config={
-                                "id": None, # Hide the ID column
-                                "Task Heading": st.column_config.TextColumn(disabled=True),
-                                "Task Name": st.column_config.TextColumn(disabled=True)
-                            }
-                        )
-                        
-                        if st.button("Save Changes"):
-                            save_checklist_batch(b_choice, edited)
-                            st.cache_data.clear()
-                            st.success("Saved! Completed items moved to the locked list.")
-                            st.rerun()
-                    else:
-                        st.success("🎉 All actions completed!")
+                    # TAB 2: INTERNAL ACTIONS
+                    with t2:
+                        if not df_pending.empty:
+                            # Pretor Group + Both (Both usually implies joint effort, so show here too)
+                            internal_pending = df_pending[df_pending['Responsibility'].isin(['Pretor Group', 'Both'])].copy()
+                            if not internal_pending.empty:
+                                internal_pending['Sort'] = internal_pending['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
+                                internal_pending = internal_pending.sort_values(by=['Sort', 'Task Name'])
+                                
+                                edited_internal = st.data_editor(
+                                    internal_pending[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']],
+                                    hide_index=True,
+                                    height=400,
+                                    key="internal_editor",
+                                    column_config={
+                                        "id": None,
+                                        "Task Heading": st.column_config.TextColumn(disabled=True),
+                                        "Task Name": st.column_config.TextColumn(disabled=True)
+                                    }
+                                )
+                                if st.button("Save Internal Items"):
+                                    save_checklist_batch(b_choice, edited_internal)
+                                    st.cache_data.clear()
+                                    st.success("Saved!")
+                                    st.rerun()
+                            else:
+                                st.info("No pending internal items.")
+                        else:
+                            st.info("No pending items.")
 
                     st.divider()
 
-                    # --- RENDER COMPLETED (LOCKED) ---
-                    st.markdown("#### ✅ Completed / Deleted Items (Locked)")
+                    # --- COMPLETED HISTORY (SHARED) ---
+                    st.markdown("#### ✅ Completed / Deleted History")
                     if not df_completed.empty:
-                        st.caption("These items are locked and cannot be edited.")
-                        cols_view = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes']
+                        cols_view = ['Task Heading', 'Task Name', 'Responsibility', 'Received', 'Date Received', 'Notes']
                         st.dataframe(df_completed[cols_view], hide_index=True, use_container_width=True)
                     else:
                         st.info("No items completed yet.")
@@ -503,7 +535,7 @@ def main():
                             else:
                                 st.error("Unit Number required")
 
-            # --- SUB SECTION 5: COUNCIL DETAILS (FIXED) ---
+            # --- SUB SECTION 5: COUNCIL DETAILS ---
             elif sub_nav == "Council Details":
                 st.subheader(f"Council Management: {b_choice}")
                 st.markdown("Manage municipal accounts for this complex.")
@@ -976,7 +1008,6 @@ def main():
                     c_items = checklist[checklist['Complex Name'] == b_choice]
                     if not c_items.empty:
                         # Received
-                        # Use loose string matching for "true"
                         rec_items = c_items[c_items['Received'].astype(str).str.lower() == 'true']
                         if not rec_items.empty:
                             for _, r in rec_items.iterrows():
@@ -984,7 +1015,7 @@ def main():
                         else:
                             received_list += "(None yet)\n"
                         
-                        # Outstanding (Not received AND not deleted)
+                        # Outstanding
                         out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
                         if not out_items.empty:
                             for _, r in out_items.iterrows():
