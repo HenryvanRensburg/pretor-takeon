@@ -252,7 +252,7 @@ def main():
                     with open(pdf, "rb") as f:
                         st.download_button("Download PDF", f, file_name=pdf)
 
-            # --- SUB SECTION 2: PROGRESS TRACKER (SPLIT VIEW) ---
+            # --- SUB SECTION 2: PROGRESS TRACKER (SPLIT VIEW + AUTO DATE) ---
             elif sub_nav == "Progress Tracker":
                 st.markdown("### Checklist")
                 
@@ -275,9 +275,15 @@ def main():
                     st.markdown("#### 📝 Pending Actions")
                     t1, t2 = st.tabs(["① Previous Agent Pending", "② Internal Pending"])
                     
-                    # Helper for Sorting
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
                     
+                    # DATE AUTO-FILLER HELPER
+                    def fill_date_if_received(row):
+                        # If Received is Checked AND Date is missing -> Insert Today
+                        if row['Received'] and (pd.isna(row['Date Received']) or str(row['Date Received']).strip() == ''):
+                            return str(datetime.now().date())
+                        return row['Date Received']
+
                     # TAB 1: PREVIOUS AGENT PENDING
                     with t1:
                         if not df_pending.empty:
@@ -298,6 +304,8 @@ def main():
                                     }
                                 )
                                 if st.button("Save Agent Items"):
+                                    # APPLY AUTO-DATE LOGIC
+                                    edited_agent['Date Received'] = edited_agent.apply(fill_date_if_received, axis=1)
                                     save_checklist_batch(b_choice, edited_agent)
                                     st.cache_data.clear()
                                     st.success("Saved!")
@@ -327,6 +335,8 @@ def main():
                                     }
                                 )
                                 if st.button("Save Internal Items"):
+                                    # APPLY AUTO-DATE LOGIC
+                                    edited_internal['Date Received'] = edited_internal.apply(fill_date_if_received, axis=1)
                                     save_checklist_batch(b_choice, edited_internal)
                                     st.cache_data.clear()
                                     st.success("Saved!")
@@ -342,31 +352,20 @@ def main():
                     st.markdown("#### ✅ Completed / History (Locked)")
                     
                     if not df_completed.empty:
-                        # Split Completed Data
                         agent_hist = df_completed[df_completed['Responsibility'].isin(['Previous Agent', 'Both'])]
                         internal_hist = df_completed[df_completed['Responsibility'].isin(['Pretor Group', 'Both'])]
                         
                         h1, h2 = st.tabs(["Agent History", "Internal History"])
                         
-                        # TAB 1: AGENT HISTORY
                         with h1:
                             if not agent_hist.empty:
-                                st.dataframe(
-                                    agent_hist[['Task Heading', 'Task Name', 'Date Received', 'Notes']], 
-                                    hide_index=True, 
-                                    use_container_width=True
-                                )
+                                st.dataframe(agent_hist[['Task Heading', 'Task Name', 'Date Received', 'Notes']], hide_index=True, use_container_width=True)
                             else:
                                 st.info("No completed items for Previous Agent.")
                         
-                        # TAB 2: INTERNAL HISTORY
                         with h2:
                             if not internal_hist.empty:
-                                st.dataframe(
-                                    internal_hist[['Task Heading', 'Task Name', 'Date Received', 'Notes']], 
-                                    hide_index=True, 
-                                    use_container_width=True
-                                )
+                                st.dataframe(internal_hist[['Task Heading', 'Task Name', 'Date Received', 'Notes']], hide_index=True, use_container_width=True)
                             else:
                                 st.info("No completed Internal items.")
                     else:
@@ -561,7 +560,7 @@ def main():
                             else:
                                 st.error("Unit Number required")
 
-            # --- SUB SECTION 5: COUNCIL DETAILS ---
+            # --- SUB SECTION 5: COUNCIL DETAILS (FIXED) ---
             elif sub_nav == "Council Details":
                 st.subheader(f"Council Management: {b_choice}")
                 st.markdown("Manage municipal accounts for this complex.")
@@ -709,6 +708,7 @@ def main():
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     if not curr_council.empty:
+                        # Only adding data to the string here, VISUAL GRID REMOVED from this section
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
@@ -1033,6 +1033,7 @@ def main():
                     c_items = checklist[checklist['Complex Name'] == b_choice]
                     if not c_items.empty:
                         # Received
+                        # Use loose string matching for "true"
                         rec_items = c_items[c_items['Received'].astype(str).str.lower() == 'true']
                         if not rec_items.empty:
                             for _, r in rec_items.iterrows():
@@ -1040,7 +1041,7 @@ def main():
                         else:
                             received_list += "(None yet)\n"
                         
-                        # Outstanding
+                        # Outstanding (Not received AND not deleted)
                         out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
                         if not out_items.empty:
                             for _, r in out_items.iterrows():
