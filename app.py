@@ -147,7 +147,7 @@ def main():
             st.divider()
             sub_nav = st.radio(
                 "Section Navigation", 
-                ["Overview", "Progress Tracker", "Staff Details", "Arrears Details", "Council Details", "Department Handovers"], 
+                ["Overview", "Progress Tracker", "Staff Details", "Arrears Details", "Council Details", "Department Handovers", "Client Updates"], 
                 horizontal=True,
                 label_visibility="collapsed"
             )
@@ -931,6 +931,71 @@ def main():
                         finalize_project_db(b_choice)
                         st.cache_data.clear()
                         st.balloons()
+
+            # --- SUB SECTION 7: CLIENT UPDATES ---
+            elif sub_nav == "Client Updates":
+                st.subheader(f"Client Status Update: {b_choice}")
+                st.markdown("Generate a progress report email for the client.")
+                
+                # 1. Internal Progress
+                internal_status = "--- INTERNAL HANDOVERS ---\n"
+                handovers = {
+                    "Wages": get_val("Wages Sent Date"),
+                    "Council": get_val("Council Email Sent Date"),
+                    "Legal/Debt": get_val("Debt Collection Sent Date"),
+                    "Insurance (Internal)": get_val("Internal Ins Email Sent Date"),
+                    "SARS": get_val("SARS Sent Date")
+                }
+                
+                for dept, date in handovers.items():
+                    status = f"✅ Done ({date})" if (date and date != "None") else "⚠️ Pending"
+                    internal_status += f"- {dept}: {status}\n"
+
+                # 2. Checklist Status
+                checklist = get_data("Checklist")
+                received_list = "--- DOCUMENTS RECEIVED ---\n"
+                pending_list = "--- OUTSTANDING ITEMS ---\n"
+                
+                if not checklist.empty:
+                    c_items = checklist[checklist['Complex Name'] == b_choice]
+                    if not c_items.empty:
+                        # Received
+                        # Use loose string matching for "true"
+                        rec_items = c_items[c_items['Received'].astype(str).str.lower() == 'true']
+                        if not rec_items.empty:
+                            for _, r in rec_items.iterrows():
+                                received_list += f"✔ {r['Task Name']}\n"
+                        else:
+                            received_list += "(None yet)\n"
+                        
+                        # Outstanding (Not received AND not deleted)
+                        out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
+                        if not out_items.empty:
+                            for _, r in out_items.iterrows():
+                                pending_list += f"⭕ {r['Task Name']}\n"
+                        else:
+                            pending_list += "(None - All Clear!)\n"
+                    else:
+                        received_list += "(No checklist items found)\n"
+                        pending_list += "(No checklist items found)\n"
+                
+                # 3. Assemble Email
+                client_email = get_val("Client Email")
+                client_body = f"Dear Client,\n\nPlease find below a status update regarding the onboarding of {b_choice}.\n\n"
+                client_body += internal_status + "\n"
+                client_body += received_list + "\n"
+                client_body += pending_list + "\n"
+                client_body += "We are actively following up on the outstanding items.\n\nRegards,\nPretor Take-On Team"
+                
+                st.text_area("Preview Email Content", value=client_body, height=400)
+                
+                if client_email and client_email != "None":
+                    sub = urllib.parse.quote(f"Status Update: {b_choice}")
+                    bod = urllib.parse.quote(client_body)
+                    lnk = f'<a href="mailto:{client_email}?subject={sub}&body={bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Send Update to Client</a>'
+                    st.markdown(lnk, unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Client Email is missing. Please add it in the 'Overview' tab.")
 
 if __name__ == "__main__":
     main()
