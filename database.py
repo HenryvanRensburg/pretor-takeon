@@ -4,230 +4,172 @@ import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
 
-# --- INITIALIZE SUPABASE CONNECTION ---
-# We try multiple ways to find the keys to prevent KeyErrors
-url = None
-key = None
-
+# --- INITIALIZE SUPABASE ---
 try:
-    # 1. Try Streamlit Secrets (Flat structure - Recommended)
-    if "SUPABASE_URL" in st.secrets:
+    if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
-    # 2. Try Nested Streamlit Secrets (Common in some tutorials)
-    elif "supabase" in st.secrets:
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["key"]
-    # 3. Fallback to OS Environment Variables
     else:
         url = os.environ.get("SUPABASE_URL")
         key = os.environ.get("SUPABASE_KEY")
-except Exception as e:
-    print(f"Error loading secrets: {e}")
+except (FileNotFoundError, KeyError):
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
 
-# Final Validation
 if not url or not key:
-    st.error("🚨 **Connection Error:** Supabase credentials not found.")
-    st.markdown("""
-    **How to fix on Streamlit Cloud:**
-    1. Go to **Settings** > **Secrets**.
-    2. Paste the following:
-    ```toml
-    SUPABASE_URL = "your_url_here"
-    SUPABASE_KEY = "your_key_here"
-    ```
-    """)
+    st.error("🚨 Supabase Credentials Missing!")
     st.stop()
 
-# Create the client
 try:
     supabase: Client = create_client(url, key)
 except Exception as e:
-    st.error(f"Failed to connect to Supabase: {e}")
+    st.error(f"Connection Error: {e}")
     st.stop()
 
+# --- AUTHENTICATION & LOGGING ---
+def login_user(email, password):
+    """Attempts to log the user in via Supabase Auth."""
+    try:
+        response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        return response.user
+    except Exception as e:
+        return None
+
+def log_access(user_email):
+    """Records the login time and user in the database."""
+    try:
+        supabase.table("LoginLogs").insert({"user_email": user_email}).execute()
+    except Exception as e:
+        print(f"Logging failed: {e}")
 
 # --- GENERIC FETCH ---
 def get_data(table_name):
-    """Fetch all data from a table and return as DataFrame."""
     try:
         response = supabase.table(table_name).select("*").execute()
         data = response.data
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e:
-        # Don't crash the app on empty tables, just print error to logs
-        print(f"Error fetching {table_name}: {e}")
         return pd.DataFrame()
 
-# --- PROJECTS & BUILDINGS ---
-def create_new_building(data):
-    """Creates a new project if it doesn't exist."""
+# --- CHECKLIST (UPDATED WITH USER TRACKING) ---
+def save_checklist_batch(complex_name, edited_df, current_user_email):
+    """Updates checklist items and records WHO completed them."""
     try:
-        existing = supabase.table("Projects").select("*").eq("Complex Name", data["Complex Name"]).execute()
-        if existing.data:
-            return "EXISTS"
-        
-        supabase.table("Projects").insert(data).execute()
+        records = edited_df.to_dict('records')
+        for row in records:
+            if row.get('id'):
+                update_data = {k: v for k, v in row.items() if k != 'id'}
+                
+                # If item is marked Received, tag the user
+                if str(row.get('Received')).lower() == 'true':
+                    update_data['Completed By'] = current_user_email
+                
+                supabase.table("Checklist").update(update_data).eq("id", row['id']).execute()
         return "SUCCESS"
     except Exception as e:
         return str(e)
 
+# --- PROJECTS ---
+def create_new_building(data):
+    try:
+        existing = supabase.table("Projects").select("*").eq("Complex Name", data["Complex Name"]).execute()
+        if existing.data: return "EXISTS"
+        supabase.table("Projects").insert(data).execute()
+        return "SUCCESS"
+    except Exception as e: return str(e)
+
 def update_building_details_batch(complex_name, updates):
-    """Updates fields in the Projects table for a specific complex."""
     try:
         supabase.table("Projects").update(updates).eq("Complex Name", complex_name).execute()
         return "SUCCESS"
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
 def update_project_agent_details(complex_name, agent_name, agent_email):
-    """Updates the previous agent details."""
-    updates = {"Agent Name": agent_name, "Agent Email": agent_email}
-    return update_building_details_batch(complex_name, updates)
+    return update_building_details_batch(complex_name, {"Agent Name": agent_name, "Agent Email": agent_email})
 
 def save_broker_details(complex_name, broker_name, broker_email):
-    """Updates insurance broker details."""
-    updates = {"Insurance Broker Name": broker_name, "Insurance Broker Email": broker_email}
-    return update_building_details_batch(complex_name, updates)
+    return update_building_details_batch(complex_name, {"Insurance Broker Name": broker_name, "Insurance Broker Email": broker_email})
 
 def update_email_status(complex_name, column_name, value=None):
-    """Updates a specific email sent date column (defaults to today)."""
     date_val = value if value is not None else str(datetime.now().date())
     return update_building_details_batch(complex_name, {column_name: date_val})
 
 def finalize_project_db(complex_name):
-    """Marks a project as finalized."""
     return update_building_details_batch(complex_name, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
 
-# --- EMPLOYEES / STAFF ---
+# --- EMPLOYEES ---
 def add_employee(complex_name, name, surname, id_num, position, salary, payslip_bool, contract_bool, tax_ref_bool):
-    """Adds a new employee."""
-    data = {
-        "Complex Name": complex_name,
-        "Name": name,
-        "Surname": surname,
-        "ID Number": id_num,
-        "Position": position,
-        "Salary": salary,
-        "Payslip Received": payslip_bool,
-        "Contract Received": contract_bool,
-        "Tax Ref Received": tax_ref_bool
-    }
     try:
+        data = {
+            "Complex Name": complex_name, "Name": name, "Surname": surname, "ID Number": id_num,
+            "Position": position, "Salary": salary, "Payslip Received": payslip_bool,
+            "Contract Received": contract_bool, "Tax Ref Received": tax_ref_bool
+        }
         supabase.table("Employees").insert(data).execute()
-    except Exception as e:
-        print(f"Error adding employee: {e}")
-        raise e
+    except Exception as e: raise e
 
 def update_employee_batch(edited_df):
-    """Updates employee records from the grid."""
     try:
         records = edited_df.to_dict('records')
         for row in records:
-            row_id = row.get('id')
-            if row_id:
+            if row.get('id'):
                 update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Employees").update(update_data).eq("id", row_id).execute()
+                supabase.table("Employees").update(update_data).eq("id", row['id']).execute()
         return "SUCCESS"
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
 # --- COUNCIL ---
 def add_council_account(complex_name, acc_num, service, balance):
-    """Adds a council account."""
-    data = {
-        "Complex Name": complex_name,
-        "Account Number": acc_num,
-        "Service": service,
-        "Balance": balance
-    }
     try:
-        supabase.table("Council").insert(data).execute()
-    except Exception as e:
-        print(f"Error adding council: {e}")
+        supabase.table("Council").insert({"Complex Name": complex_name, "Account Number": acc_num, "Service": service, "Balance": balance}).execute()
+    except Exception as e: print(f"Error adding council: {e}")
 
 def update_council_batch(edited_df):
-    """Updates council records from the grid."""
     try:
         records = edited_df.to_dict('records')
         for row in records:
-            row_id = row.get('id')
-            if row_id:
+            if row.get('id'):
                 update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Council").update(update_data).eq("id", row_id).execute()
+                supabase.table("Council").update(update_data).eq("id", row['id']).execute()
         return "SUCCESS"
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
-# --- ARREARS / DEBT COLLECTION ---
+# --- ARREARS ---
 def add_arrears_item(complex_name, unit, amount, att_name, att_email, att_phone):
-    """Adds a new arrears record."""
-    data = {
-        "Complex Name": complex_name,
-        "Unit Number": unit,
-        "Outstanding Amount": amount,
-        "Attorney Name": att_name,
-        "Attorney Email": att_email,
-        "Attorney Phone": att_phone
-    }
     try:
+        data = {
+            "Complex Name": complex_name, "Unit Number": unit, "Outstanding Amount": amount,
+            "Attorney Name": att_name, "Attorney Email": att_email, "Attorney Phone": att_phone
+        }
         supabase.table("Arrears").insert(data).execute()
-    except Exception as e:
-        print(f"Error adding arrears: {e}")
-        raise e
+    except Exception as e: raise e
 
 def update_arrears_batch(edited_df):
-    """Updates arrears records from the grid."""
     try:
         records = edited_df.to_dict('records')
         for row in records:
-            row_id = row.get('id')
-            if row_id:
+            if row.get('id'):
                 update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Arrears").update(update_data).eq("id", row_id).execute()
+                supabase.table("Arrears").update(update_data).eq("id", row['id']).execute()
         return "SUCCESS"
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
-# --- CHECKLIST ---
-def save_checklist_batch(complex_name, edited_df):
-    """Updates checklist items."""
-    try:
-        records = edited_df.to_dict('records')
-        for row in records:
-            row_id = row.get('id')
-            if row_id:
-                update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Checklist").update(update_data).eq("id", row_id).execute()
-        return "SUCCESS"
-    except Exception as e:
-        return str(e)
-
-# --- MASTER ITEMS ---
+# --- MASTER & SETTINGS ---
 def add_master_item(task_name, category, responsibility, heading):
-    """Adds item to Master table."""
     try:
-        data = {"Task Name": task_name, "Category": category, "Responsibility": responsibility, "Heading": heading}
-        supabase.table("Master").insert(data).execute()
-    except Exception as e:
-        print(e)
+        supabase.table("Master").insert({"Task Name": task_name, "Category": category, "Responsibility": responsibility, "Heading": heading}).execute()
+    except Exception as e: print(e)
 
-# --- GLOBAL SETTINGS ---
 def save_global_settings(settings_dict):
-    """Updates the Settings table."""
     try:
         supabase.table("Settings").delete().neq("id", 0).execute() 
         for dept, email in settings_dict.items():
             supabase.table("Settings").insert({"Department": dept, "Email": email}).execute()
-    except Exception as e:
-        print(e)
+    except Exception as e: print(e)
 
 # --- PLACEHOLDERS ---
-def add_service_provider(name, type, contact): pass 
-def add_trustee(complex, name, email, phone): pass 
-def delete_record_by_match(table, col, val):
-    try:
-        supabase.table(table).delete().eq(col, val).execute()
-    except: pass
-def update_service_provider_date(complex, date): pass
-def update_wages_status(complex, status): pass
+def add_service_provider(n, t, c): pass 
+def add_trustee(c, n, e, p): pass 
+def delete_record_by_match(t, c, v): pass
+def update_service_provider_date(c, d): pass
+def update_wages_status(c, s): pass
