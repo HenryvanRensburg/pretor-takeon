@@ -271,13 +271,14 @@ def main():
                     # 2. COMPLETED (Locked)
                     df_completed = c_items[(c_items['Received'] == True) | (c_items['Delete'] == True)]
 
-                    # --- TABS FOR PENDING ITEMS ---
-                    t1, t2 = st.tabs(["① Previous Agent Actions", "② Internal Actions"])
+                    # --- PENDING ITEMS TABS ---
+                    st.markdown("#### 📝 Pending Actions")
+                    t1, t2 = st.tabs(["① Previous Agent Pending", "② Internal Pending"])
                     
                     # Helper for Sorting
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
                     
-                    # TAB 1: PREVIOUS AGENT
+                    # TAB 1: PREVIOUS AGENT PENDING
                     with t1:
                         if not df_pending.empty:
                             agent_pending = df_pending[df_pending['Responsibility'].isin(['Previous Agent', 'Both'])].copy()
@@ -306,10 +307,9 @@ def main():
                         else:
                             st.info("No pending items.")
 
-                    # TAB 2: INTERNAL ACTIONS
+                    # TAB 2: INTERNAL PENDING
                     with t2:
                         if not df_pending.empty:
-                            # Pretor Group + Both (Both usually implies joint effort, so show here too)
                             internal_pending = df_pending[df_pending['Responsibility'].isin(['Pretor Group', 'Both'])].copy()
                             if not internal_pending.empty:
                                 internal_pending['Sort'] = internal_pending['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
@@ -338,11 +338,37 @@ def main():
 
                     st.divider()
 
-                    # --- COMPLETED HISTORY (SHARED) ---
-                    st.markdown("#### ✅ Completed / Deleted History")
+                    # --- COMPLETED HISTORY (SPLIT VIEW) ---
+                    st.markdown("#### ✅ Completed / History (Locked)")
+                    
                     if not df_completed.empty:
-                        cols_view = ['Task Heading', 'Task Name', 'Responsibility', 'Received', 'Date Received', 'Notes']
-                        st.dataframe(df_completed[cols_view], hide_index=True, use_container_width=True)
+                        # Split Completed Data
+                        agent_hist = df_completed[df_completed['Responsibility'].isin(['Previous Agent', 'Both'])]
+                        internal_hist = df_completed[df_completed['Responsibility'].isin(['Pretor Group', 'Both'])]
+                        
+                        h1, h2 = st.tabs(["Agent History", "Internal History"])
+                        
+                        # TAB 1: AGENT HISTORY
+                        with h1:
+                            if not agent_hist.empty:
+                                st.dataframe(
+                                    agent_hist[['Task Heading', 'Task Name', 'Date Received', 'Notes']], 
+                                    hide_index=True, 
+                                    use_container_width=True
+                                )
+                            else:
+                                st.info("No completed items for Previous Agent.")
+                        
+                        # TAB 2: INTERNAL HISTORY
+                        with h2:
+                            if not internal_hist.empty:
+                                st.dataframe(
+                                    internal_hist[['Task Heading', 'Task Name', 'Date Received', 'Notes']], 
+                                    hide_index=True, 
+                                    use_container_width=True
+                                )
+                            else:
+                                st.info("No completed Internal items.")
                     else:
                         st.info("No items completed yet.")
 
@@ -683,7 +709,6 @@ def main():
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     if not curr_council.empty:
-                        # Only adding data to the string here, VISUAL GRID REMOVED from this section
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
