@@ -356,21 +356,43 @@ def main():
                                 # --- COMPLETION EMAIL TO CLIENT ---
                                 st.divider()
                                 st.markdown("#### 🚀 Take-On Complete: Notify Client")
-                                client_email_addr = get_val("Client Email")
                                 
-                                if client_email_addr and client_email_addr != "None":
-                                    comp_body = f"Dear Client,\n\n"
-                                    comp_body += f"We are pleased to confirm that the take-on process for {b_choice} has been successfully completed.\n\n"
-                                    comp_body += "All relevant information has been received and filed accordingly.\n\n"
-                                    comp_body += "We appreciate the trust you have placed in Pretor Group. We undertake to ensure that the complex is managed with the utmost integrity going forward.\n\n"
-                                    comp_body += "Regards,\nPretor Take-On Team"
-                                    
-                                    comp_sub = urllib.parse.quote(f"Take-On Completed: {b_choice}")
-                                    comp_bod_enc = urllib.parse.quote(comp_body)
-                                    comp_link = f'<a href="mailto:{client_email_addr}?subject={comp_sub}&body={comp_bod_enc}" target="_blank" style="text-decoration:none; color:white; background-color:#09ab3b; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Draft Completion Email to Client</a>'
-                                    st.markdown(comp_link, unsafe_allow_html=True)
+                                # Check if already sent
+                                comp_sent_date = get_val("Client Completion Email Sent Date")
+                                client_email_addr = get_val("Client Email")
+
+                                if comp_sent_date and comp_sent_date != "None":
+                                    st.success(f"✅ Client Completion Email Sent on: {comp_sent_date}")
+                                    # Button is hidden/locked because the date exists
+                                    if st.button("Unlock (Resend Client Completion)", key="rst_client_comp"):
+                                        update_email_status(b_choice, "Client Completion Email Sent Date", "")
+                                        st.cache_data.clear()
+                                        st.rerun()
                                 else:
-                                    st.warning("⚠️ Client Email missing in Overview tab. Cannot generate completion email.")
+                                    if client_email_addr and client_email_addr != "None":
+                                        comp_body = f"Dear Client,\n\n"
+                                        comp_body += f"We are pleased to confirm that the take-on process for {b_choice} has been successfully completed.\n\n"
+                                        comp_body += "All relevant information has been received and filed accordingly.\n\n"
+                                        comp_body += "We appreciate the trust you have placed in Pretor Group. We undertake to ensure that the complex is managed with the utmost integrity going forward.\n\n"
+                                        comp_body += "Regards,\nPretor Take-On Team"
+                                        
+                                        comp_sub = urllib.parse.quote(f"Take-On Completed: {b_choice}")
+                                        comp_bod_enc = urllib.parse.quote(comp_body)
+                                        
+                                        col_comp1, col_comp2 = st.columns([1,1])
+                                        with col_comp1:
+                                            comp_link = f'<a href="mailto:{client_email_addr}?subject={comp_sub}&body={comp_bod_enc}" target="_blank" style="text-decoration:none; color:white; background-color:#09ab3b; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Draft Email</a>'
+                                            st.markdown(comp_link, unsafe_allow_html=True)
+                                        with col_comp2:
+                                            if st.button("Mark as Sent", key="btn_client_comp_sent"):
+                                                res = update_email_status(b_choice, "Client Completion Email Sent Date")
+                                                if res == "SUCCESS":
+                                                    st.cache_data.clear()
+                                                    st.rerun()
+                                                else:
+                                                    st.error(f"Update failed: {res}. Check Supabase column 'Client Completion Email Sent Date'.")
+                                    else:
+                                        st.warning("⚠️ Client Email missing in Overview tab.")
 
                             else:
                                 st.info("No items assigned to Previous Agent.")
@@ -624,17 +646,24 @@ def main():
                 st.subheader(f"Council Management: {b_choice}")
                 st.markdown("Manage municipal accounts for this complex.")
                 
+                # Fetch both 'Council' and 'council' to be safe
                 council_data = get_data("Council")
                 if council_data.empty:
                     council_data = get_data("council")
                 
                 if not council_data.empty:
+                    # Clean column names (strip spaces, normalize)
                     council_data.columns = [c.strip() for c in council_data.columns]
+                    
                     rename_map = {
-                        'complex_name': 'Complex Name', 'account_number': 'Account Number',
-                        'service': 'Service', 'balance': 'Balance',
-                        'Complex Name': 'Complex Name', 'Account Number': 'Account Number',
-                        'complex name': 'Complex Name', 'account number': 'Account Number'
+                        'complex_name': 'Complex Name',
+                        'account_number': 'Account Number',
+                        'service': 'Service',
+                        'balance': 'Balance',
+                        'Complex Name': 'Complex Name',
+                        'Account Number': 'Account Number',
+                        'complex name': 'Complex Name',
+                        'account number': 'Account Number'
                     }
                     council_data.rename(columns=rename_map, inplace=True)
                 
@@ -737,6 +766,7 @@ def main():
                 muni_email = s_dict.get("Municipal", "")
                 c_sent_date = get_val("Council Email Sent Date")
                 
+                # Fetch Data for Email Body (Try both cases)
                 council_data = get_data("Council")
                 if council_data.empty: council_data = get_data("council")
                 
@@ -749,6 +779,7 @@ def main():
                     }
                     council_data.rename(columns=rename_map, inplace=True)
                 
+                # UPDATED EMAIL BODY FOR COUNCIL
                 council_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council"
                 
                 c_body_str = f"Dear Council Team,\n\nPlease note that the latest council accounts and documents received from the previous agents can be found at the following location:\n{council_path}\n\n"
@@ -1082,7 +1113,6 @@ def main():
                     c_items = checklist[checklist['Complex Name'] == b_choice]
                     if not c_items.empty:
                         # Received
-                        # Use loose string matching for "true"
                         rec_items = c_items[c_items['Received'].astype(str).str.lower() == 'true']
                         if not rec_items.empty:
                             for _, r in rec_items.iterrows():
@@ -1090,7 +1120,7 @@ def main():
                         else:
                             received_list += "(None yet)\n"
                         
-                        # Outstanding (Not received AND not deleted)
+                        # Outstanding
                         out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
                         if not out_items.empty:
                             for _, r in out_items.iterrows():
