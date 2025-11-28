@@ -12,10 +12,159 @@ from pdf_generator import generate_appointment_pdf, generate_report_pdf, generat
 import urllib.parse
 from datetime import datetime
 import os
+from fpdf import FPDF  # Ensure fpdf is installed
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pretor Take-On", layout="wide")
 
+# --- PDF GENERATOR HELPER FOR CLIENT REPORT ---
+class ClientReportPDF(FPDF):
+    def header(self):
+        if os.path.exists("pretor_logo.png"):
+            self.image("pretor_logo.png", 10, 8, 33)
+        self.set_font('Arial', 'B', 15)
+        self.cell(80)
+        self.cell(30, 10, 'Take-On Handover Report', 0, 0, 'C')
+        self.ln(20)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    def chapter_title(self, label):
+        self.set_font('Arial', 'B', 12)
+        self.set_fill_color(200, 220, 255)
+        self.cell(0, 6, f"{label}", 0, 1, 'L', 1)
+        self.ln(4)
+
+    def chapter_body(self, body):
+        self.set_font('Arial', '', 10)
+        self.multi_cell(0, 5, body)
+        self.ln()
+
+def generate_client_handover_pdf(complex_name, checklist_df, emp_df, arrears_df, council_df):
+    pdf = ClientReportPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # --- 1. TITLE & DATE ---
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, f"Complex: {complex_name}", 0, 1, "L")
+    pdf.set_font("Arial", "I", 10)
+    pdf.cell(0, 10, f"Date Generated: {datetime.now().strftime('%Y-%m-%d')}", 0, 1, "L")
+    pdf.ln(5)
+
+    # --- 2. ITEMS RECEIVED FROM PREVIOUS AGENT ---
+    pdf.chapter_title("1. Items Received from Previous Agent")
+    if not checklist_df.empty:
+        # Filter: Responsibility includes Agent AND Received is True
+        agent_items = checklist_df[
+            (checklist_df['Responsibility'].isin(['Previous Agent', 'Both'])) & 
+            (checklist_df['Received'].astype(str).str.lower() == 'true')
+        ]
+        if not agent_items.empty:
+            for _, row in agent_items.iterrows():
+                date_rec = row.get('Date Received', '')
+                pdf.set_font("Arial", "", 10)
+                pdf.cell(5) # Indent
+                pdf.cell(0, 5, f"- {row['Task Name']} (Rec: {date_rec})", 0, 1)
+            pdf.ln(5)
+        else:
+            pdf.chapter_body("No items marked as received from previous agent yet.")
+    else:
+        pdf.chapter_body("No checklist data found.")
+
+    # --- 3. ITEMS ATTENDED TO BY PRETOR ---
+    pdf.chapter_title("2. Actions Taken by Pretor Group")
+    if not checklist_df.empty:
+        # Filter: Responsibility includes Pretor AND Received is True (Completed)
+        pretor_items = checklist_df[
+            (checklist_df['Responsibility'].isin(['Pretor Group', 'Both'])) & 
+            (checklist_df['Received'].astype(str).str.lower() == 'true')
+        ]
+        if not pretor_items.empty:
+            for _, row in pretor_items.iterrows():
+                pdf.set_font("Arial", "", 10)
+                pdf.cell(5) 
+                pdf.cell(0, 5, f"- {row['Task Name']} (Done)", 0, 1)
+            pdf.ln(5)
+        else:
+            pdf.chapter_body("No internal actions marked as complete yet.")
+    else:
+        pdf.chapter_body("No checklist data found.")
+
+    # --- 4. WAGES & STAFF ---
+    pdf.chapter_title("3. Wages & Staff Loaded")
+    if not emp_df.empty and 'Complex Name' in emp_df.columns:
+        c_emp = emp_df[emp_df['Complex Name'] == complex_name]
+        if not c_emp.empty:
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(60, 6, "Name", 1)
+            pdf.cell(50, 6, "Position", 1)
+            pdf.cell(40, 6, "Salary", 1)
+            pdf.ln()
+            pdf.set_font("Arial", "", 9)
+            for _, row in c_emp.iterrows():
+                pdf.cell(60, 6, f"{row.get('Name','')} {row.get('Surname','')}", 1)
+                pdf.cell(50, 6, str(row.get('Position','')), 1)
+                pdf.cell(40, 6, f"R {row.get('Salary',0)}", 1)
+                pdf.ln()
+            pdf.ln(5)
+        else:
+            pdf.chapter_body("No staff loaded.")
+    else:
+        pdf.chapter_body("No staff data available.")
+
+    # --- 5. DEBT COLLECTION ---
+    pdf.chapter_title("4. Arrears Handover")
+    if not arrears_df.empty and 'Complex Name' in arrears_df.columns:
+        c_arr = arrears_df[arrears_df['Complex Name'] == complex_name]
+        if not c_arr.empty:
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(30, 6, "Unit", 1)
+            pdf.cell(40, 6, "Amount", 1)
+            pdf.cell(80, 6, "Attorney", 1)
+            pdf.ln()
+            pdf.set_font("Arial", "", 9)
+            for _, row in c_arr.iterrows():
+                pdf.cell(30, 6, str(row.get('Unit Number','')), 1)
+                pdf.cell(40, 6, f"R {row.get('Outstanding Amount',0)}", 1)
+                pdf.cell(80, 6, str(row.get('Attorney Name','')), 1)
+                pdf.ln()
+            pdf.ln(5)
+        else:
+            pdf.chapter_body("No arrears loaded.")
+    else:
+        pdf.chapter_body("No arrears data available.")
+
+    # --- 6. COUNCIL ---
+    pdf.chapter_title("5. Council Accounts")
+    if not council_df.empty and 'Complex Name' in council_df.columns:
+        c_coun = council_df[council_df['Complex Name'] == complex_name]
+        if not c_coun.empty:
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(60, 6, "Account Number", 1)
+            pdf.cell(50, 6, "Service", 1)
+            pdf.cell(40, 6, "Balance", 1)
+            pdf.ln()
+            pdf.set_font("Arial", "", 9)
+            for _, row in c_coun.iterrows():
+                pdf.cell(60, 6, str(row.get('Account Number','')), 1)
+                pdf.cell(50, 6, str(row.get('Service','')), 1)
+                pdf.cell(40, 6, f"R {row.get('Balance',0)}", 1)
+                pdf.ln()
+            pdf.ln(5)
+        else:
+            pdf.chapter_body("No council accounts loaded.")
+    else:
+        pdf.chapter_body("No council data available.")
+
+    filename = f"Handover_Report_{complex_name}_{datetime.now().strftime('%Y%m%d')}.pdf"
+    pdf.output(filename)
+    return filename
+
+# --- MAIN APP LOGIC ---
 def main():
     if os.path.exists("pretor_logo.png"):
         st.sidebar.image("pretor_logo.png", use_container_width=True)
@@ -363,7 +512,6 @@ def main():
 
                                 if comp_sent_date and comp_sent_date != "None":
                                     st.success(f"✅ Client Completion Email Sent on: {comp_sent_date}")
-                                    # Button is hidden/locked because the date exists
                                     if st.button("Unlock (Resend Client Completion)", key="rst_client_comp"):
                                         update_email_status(b_choice, "Client Completion Email Sent Date", "")
                                         st.cache_data.clear()
@@ -381,7 +529,7 @@ def main():
                                         
                                         col_comp1, col_comp2 = st.columns([1,1])
                                         with col_comp1:
-                                            comp_link = f'<a href="mailto:{client_email_addr}?subject={comp_sub}&body={comp_bod_enc}" target="_blank" style="text-decoration:none; color:white; background-color:#09ab3b; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Draft Email</a>'
+                                            comp_link = f'<a href="mailto:{client_email_addr}?subject={comp_sub}&body={comp_bod_enc}" target="_blank" style="text-decoration:none; color:white; background-color:#09ab3b; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Draft Completion Email to Client</a>'
                                             st.markdown(comp_link, unsafe_allow_html=True)
                                         with col_comp2:
                                             if st.button("Mark as Sent", key="btn_client_comp_sent"):
@@ -1120,7 +1268,7 @@ def main():
                         else:
                             received_list += "(None yet)\n"
                         
-                        # Outstanding
+                        # Outstanding (Not received AND not deleted)
                         out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
                         if not out_items.empty:
                             for _, r in out_items.iterrows():
@@ -1130,10 +1278,25 @@ def main():
                     else:
                         received_list += "(No checklist items found)\n"
                         pending_list += "(No checklist items found)\n"
-                
-                # 3. Assemble Email
+
+                # 3. Generate DataFrames for PDF Report
+                emp_df = get_data("Employees")
+                arrears_df = get_data("Arrears")
+                council_df = get_data("Council")
+
+                st.markdown("#### 📄 Generate PDF Report")
+                if st.button("Generate Handover Report PDF"):
+                    pdf_file = generate_client_handover_pdf(b_choice, c_items if 'c_items' in locals() else pd.DataFrame(), emp_df, arrears_df, council_df)
+                    with open(pdf_file, "rb") as f:
+                        st.download_button("⬇️ Download PDF Report", f, file_name=pdf_file, mime="application/pdf")
+                    st.success("PDF generated successfully! Click above to download.")
+
+                st.divider()
+
+                # 4. Assemble Email
                 client_email = get_val("Client Email")
                 client_body = f"Dear Client,\n\nPlease find below a status update regarding the onboarding of {b_choice}.\n\n"
+                client_body += "We have attached a detailed Handover Report for your records.\n\n"
                 client_body += internal_status + "\n"
                 client_body += received_list + "\n"
                 client_body += pending_list + "\n"
@@ -1146,6 +1309,7 @@ def main():
                     bod = urllib.parse.quote(client_body)
                     lnk = f'<a href="mailto:{client_email}?subject={sub}&body={bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Send Update to Client</a>'
                     st.markdown(lnk, unsafe_allow_html=True)
+                    st.info("ℹ️ Note: Please attach the downloaded PDF manually to the email.")
                 else:
                     st.warning("⚠️ Client Email is missing. Please add it in the 'Overview' tab.")
 
