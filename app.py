@@ -88,7 +88,7 @@ def main():
             wages = st.text_input("Wages", value=s_dict.get("Wages", ""))
             sars = st.text_input("SARS", value=s_dict.get("SARS", ""))
             muni = st.text_input("Municipal", value=s_dict.get("Municipal", ""))
-            debt = st.text_input("Debt Collection", value=s_dict.get("Debt Collection", ""))
+            debt = st.text_input("Debt Collection (Legal)", value=s_dict.get("Debt Collection", ""))
             ins = st.text_input("Insurance", value=s_dict.get("Insurance", ""))
             acc = st.text_input("Accounts", value=s_dict.get("Accounts", ""))
             if st.form_submit_button("Save"):
@@ -223,12 +223,15 @@ def main():
                     
                     if st.form_submit_button("💾 Save Missing Details"):
                         updates = {
+                            # General
                             "Building Code": u_code, "Type": u_type, "No of Units": u_units,
                             "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos,
                             "Physical Address": u_addr,
+                            # Financial
                             "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp,
                             "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod,
                             "Auditor": u_aud, "Last Audit": u_last_aud,
+                            # Team
                             "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e,
                             "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom,
                             "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e
@@ -404,7 +407,7 @@ def main():
                         else:
                             st.error("Name, Surname and ID are required.")
 
-            # --- SUB SECTION 4: ARREARS DETAILS (NEW) ---
+            # --- SUB SECTION 4: ARREARS DETAILS ---
             elif sub_nav == "Arrears Details":
                 st.subheader(f"Arrears Management: {b_choice}")
                 st.markdown("Manage the list of units with outstanding levies below.")
@@ -531,49 +534,21 @@ def main():
                 st.markdown("#### Council")
                 
                 council_data = get_data("Council")
-                
                 if not council_data.empty:
-                    rename_map = {
-                        'complex_name': 'Complex Name',
-                        'account_number': 'Account Number',
-                        'service': 'Service',
-                        'balance': 'Balance',
-                        'Complex_Name': 'Complex Name',
-                        'Account_Number': 'Account Number'
-                    }
+                    rename_map = {'complex_name': 'Complex Name','account_number': 'Account Number','service': 'Service','balance': 'Balance'}
                     council_data.rename(columns=rename_map, inplace=True)
                 
                 c_body_str = f"Dear Council Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
 
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
-                    
                     if not curr_council.empty:
-                        st.caption("📝 Edit Account Details Below:")
-                        c_cols = ['id', 'Account Number', 'Service', 'Balance']
-                        c_cols = [c for c in c_cols if c in curr_council.columns]
-                        
-                        edited_council = st.data_editor(
-                            curr_council[c_cols],
-                            hide_index=True,
-                            use_container_width=True,
-                            column_config={
-                                "id": st.column_config.Column(disabled=True, width="small"),
-                                "Balance": st.column_config.NumberColumn(format="R %.2f")
-                            },
-                            key="council_editor"
-                        )
-                        
-                        if st.button("💾 Save Changes to Accounts"):
-                            update_council_batch(edited_council)
-                            st.cache_data.clear()
-                            st.success("Council accounts updated.")
-                            st.rerun()
-                        
+                        st.caption("Existing Accounts (See 'Progress Tracker' tab to edit):")
+                        st.dataframe(curr_council[['Account Number', 'Service', 'Balance']], hide_index=True)
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
-                        st.info("No council accounts loaded yet.")
+                        st.info("No council accounts loaded.")
                         c_body_str += "(No accounts loaded)\n"
                 else:
                     st.info("No council data available.")
@@ -622,7 +597,7 @@ def main():
                 
                 st.divider()
 
-                # 3. Generic Function for REMAINING departments
+                # 3. Generic Function
                 def render_handover_section(dept_name, db_column, email_key, custom_body=None):
                     st.markdown(f"#### {dept_name}")
                     sent_date = get_val(db_column)
@@ -674,7 +649,6 @@ def main():
                     if broker_email:
                         pm_name = get_val("Assigned Manager")
                         pm_email = get_val("Manager Email")
-                        
                         broker_body = f"Dear Broker,\n\nPlease take note that Pretor Group has been appointed as the managing agents for {b_choice}.\n\n"
                         broker_body += "We kindly request the following documents for our records:\n"
                         broker_body += "1. The latest Insurance Policy Schedule.\n"
@@ -685,7 +659,6 @@ def main():
 
                         subj = urllib.parse.quote(f"Insurance Appointment: {b_choice}")
                         bod = urllib.parse.quote(broker_body)
-                        
                         lnk = f'<a href="mailto:{broker_email}?subject={subj}&body={bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Broker Email</a>'
                         st.markdown(lnk, unsafe_allow_html=True)
                     else:
@@ -697,14 +670,12 @@ def main():
                         st.rerun()
                 
                 st.markdown("**Internal Insurance Dept**")
-                
                 ins_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance"
                 internal_ins_body = f"Hi Insurance Team,\n\n"
                 internal_ins_body += f"Please note that {b_choice} is now being managed by Pretor.\n\n"
                 internal_ins_body += f"You can find the latest insurance policy and claims history saved at the following location:\n{ins_path}\n\n"
                 internal_ins_body += "Could you please review these documents and provide us with an insurance quotation?\n\n"
                 internal_ins_body += "Regards,\nPretor Take-On Team"
-
                 render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", custom_body=internal_ins_body)
 
                 # 5. Wages
@@ -723,7 +694,6 @@ def main():
                             has_pay = "YES" if str(emp.get('Payslip Received', False)).lower() == 'true' else "NO"
                             has_con = "YES" if str(emp.get('Contract Received', False)).lower() == 'true' else "NO"
                             has_tax = "YES" if str(emp.get('Tax Ref Received', False)).lower() == 'true' else "NO"
-                            
                             wages_body += f"Employee: {emp.get('Name','')} {emp.get('Surname','')}\n"
                             wages_body += f"ID: {emp.get('ID Number','')}\n"
                             wages_body += f"Position: {emp.get('Position','')} | Salary: R{emp.get('Salary', 0)}\n"
@@ -734,26 +704,19 @@ def main():
                     wages_body += "(No staff loaded on system)\n"
                 
                 wages_body += "Regards,\nPretor Take-On Team"
-                
                 render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
-                # 6. Debt Collection (HANDOVER ONLY - DATA IS IN ARREARS DETAILS TAB)
-                # Fetch Data just for the email body construction
+                # 6. Debt Collection (UPDATED)
+                st.markdown("#### Debt Collection & Legal")
+                
+                # Internal Handover
+                st.markdown("**Internal Handover**")
                 arrears_data = get_data("Arrears")
                 if not arrears_data.empty:
-                    rename_map_arr = {
-                        'complex_name': 'Complex Name',
-                        'unit_number': 'Unit Number',
-                        'outstanding_amount': 'Outstanding Amount',
-                        'attorney_name': 'Attorney Name',
-                        'attorney_email': 'Attorney Email',
-                        'attorney_phone': 'Attorney Phone',
-                        'Complex_Name': 'Complex Name'
-                    }
+                    rename_map_arr = {'complex_name': 'Complex Name', 'unit_number': 'Unit Number', 'outstanding_amount': 'Outstanding Amount', 'attorney_name': 'Attorney Name', 'attorney_email': 'Attorney Email', 'attorney_phone': 'Attorney Phone'}
                     arrears_data.rename(columns=rename_map_arr, inplace=True)
 
                 dc_body = f"Dear Debt Collection Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ARREARS LIST ---\n"
-                
                 if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
                     curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
                     if not curr_arrears.empty:
@@ -767,11 +730,67 @@ def main():
                     dc_body += "(No arrears loaded)\n"
                 
                 dc_body += "\nRegards,\nPretor Take-On Team"
+                render_handover_section("Debt Collection (Internal)", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
 
-                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
+                # External Attorney Notifications
+                st.markdown("**External Attorney Notifications**")
+                st.caption("Notify attorneys that Pretor is taking over.")
+                
+                if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
+                    curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
+                    
+                    if not curr_arrears.empty:
+                        # Find unique attorneys with valid emails
+                        attorneys = curr_arrears.dropna(subset=['Attorney Email'])
+                        unique_emails = attorneys['Attorney Email'].unique()
+                        
+                        legal_dept_email = s_dict.get("Debt Collection", "")
+                        pm_name = get_val("Assigned Manager")
+                        pm_email = get_val("Manager Email")
 
-                # 7. Accounts
-                # Removed as requested
+                        for att_email in unique_emails:
+                            if not att_email: continue
+                            
+                            # Get specific attorney data
+                            att_rows = curr_arrears[curr_arrears['Attorney Email'] == att_email]
+                            att_name = att_rows.iloc[0].get('Attorney Name', 'Attorney')
+                            
+                            # Build Email
+                            att_body = f"Dear {att_name},\n\n"
+                            att_body += f"Please be advised that Pretor Group has been appointed as the managing agents for {b_choice}.\n\n"
+                            att_body += "We note that you are currently handling collections for the following units:\n"
+                            for _, r in att_rows.iterrows():
+                                att_body += f"- Unit {r['Unit Number']} (Outstanding: R{r.get('Outstanding Amount',0)})\n"
+                            
+                            att_body += "\nPlease direct all future communication regarding these matters to our Legal Department and the appointed Portfolio Manager:\n\n"
+                            att_body += f"**Legal Department:** {legal_dept_email}\n"
+                            att_body += f"**Portfolio Manager:** {pm_name} ({pm_email})\n\n"
+                            att_body += "Regards,\nPretor Take-On Team"
+                            
+                            # Build Mailto Link with CC
+                            # mailto:to?cc=cc&subject=sub&body=body
+                            att_sub = urllib.parse.quote(f"Handover: {b_choice} - Pretor Group Appointment")
+                            att_bod = urllib.parse.quote(att_body)
+                            
+                            # CC string (comma separated)
+                            cc_list = []
+                            if legal_dept_email: cc_list.append(legal_dept_email)
+                            if pm_email: cc_list.append(pm_email)
+                            cc_str = ",".join(cc_list)
+                            
+                            # Mailto construction
+                            mailto_href = f"mailto:{att_email}?subject={att_sub}&body={att_bod}"
+                            if cc_str:
+                                mailto_href += f"&cc={cc_str}"
+                                
+                            st.markdown(f'<a href="{mailto_href}" target="_blank" style="text-decoration:none; color:white; background-color:#4CAF50; padding:6px 12px; border-radius:5px; margin-right:10px;">📧 Draft Email to {att_name}</a>', unsafe_allow_html=True)
+                            st.write("") # Spacer
+                    else:
+                        st.info("No attorneys loaded in Arrears Details.")
+                else:
+                    st.info("No arrears data found.")
+
+                st.divider()
 
                 # 8. Fee Confirmation
                 st.markdown("#### Fee Confirmation")
