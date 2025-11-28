@@ -5,7 +5,7 @@ from database import (
     add_council_account, add_trustee, delete_record_by_match, save_global_settings, 
     update_building_details_batch, create_new_building, update_project_agent_details, 
     save_checklist_batch, finalize_project_db, save_broker_details, update_email_status, 
-    update_service_provider_date, update_wages_status, update_employee_batch
+    update_service_provider_date, update_wages_status, update_employee_batch, update_council_batch, update_arrears_batch
 )
 from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
@@ -157,45 +157,83 @@ def main():
                 st.subheader(f"Project Overview: {b_choice}")
                 
                 with st.form("project_overview_form"):
-                    st.markdown("#### 📝 Building Details")
                     st.caption("Fields with existing data are locked 🔒. Please fill in any missing details.")
                     
                     def smart_input(label, col_name, col_obj=st):
                         curr_val = str(p_row.get(col_name, ''))
-                        # FIX: Enforce boolean result for 'disabled'
                         has_data = bool(curr_val and curr_val.lower() not in ["none", "nan", ""])
-                        
                         return col_obj.text_input(
                             label, 
                             value=curr_val if has_data else "", 
                             disabled=has_data,
                             key=f"ov_{col_name}",
-                            placeholder="Enter missing detail..."
+                            placeholder="Enter detail..."
                         )
 
+                    # --- SECTION 1: GENERAL & ADDRESS ---
+                    st.markdown("#### 📍 General & Address")
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         u_code = smart_input("Building Code", "Building Code", c1)
                         u_type = smart_input("Type (BC/HOA)", "Type", c1)
-                        u_units = smart_input("No of Units", "No of Units", c1)
-                    
                     with c2:
-                        u_ye = smart_input("Year End", "Year End", c2)
-                        u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c2)
-                        u_tod = smart_input("Take On Date", "Take On Date", c2)
-                    
+                        u_units = smart_input("No of Units", "No of Units", c2)
+                        u_ss = smart_input("SS Number", "SS Number", c2)
                     with c3:
-                        u_man = smart_input("Portfolio Manager", "Assigned Manager", c3)
-                        u_mail = smart_input("Manager Email", "Manager Email", c3)
-                        u_tom = smart_input("Take-On Manager", "TakeOn Name", c3)
+                        u_erf = smart_input("Erf Number", "Erf Number", c3)
+                        u_csos = smart_input("CSOS Number", "CSOS Number", c3)
+                    
+                    st.markdown("")
+                    u_addr = smart_input("Physical Address", "Physical Address", st)
+
+                    # --- SECTION 2: FINANCIAL & COMPLIANCE ---
+                    st.divider()
+                    st.markdown("#### 💰 Financial & Compliance")
+                    c4, c5, c6 = st.columns(3)
+                    with c4:
+                        u_ye = smart_input("Year End", "Year End", c4)
+                        u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c4)
+                        u_exp = smart_input("Expense Code", "Expense Code", c4)
+                    with c5:
+                        u_vat = smart_input("VAT Number", "VAT Number", c5)
+                        u_tax = smart_input("Tax Number", "Tax Number", c5)
+                        u_tod = smart_input("Take On Date", "Take On Date", c5)
+                    with c6:
+                        u_aud = smart_input("Auditor", "Auditor", c6)
+                        u_last_aud = smart_input("Last Audit", "Last Audit", c6)
+
+                    # --- SECTION 3: THE TEAM ---
+                    st.divider()
+                    st.markdown("#### 👥 The Team")
+                    c7, c8, c9 = st.columns(3)
+                    with c7:
+                        u_pm = smart_input("Portfolio Manager", "Assigned Manager", c7)
+                        u_pm_e = smart_input("PM Email", "Manager Email", c7)
+                        u_client_e = smart_input("Client Email", "Client Email", c7)
+                    with c8:
+                        u_pa = smart_input("Portfolio Assistant", "Portfolio Assistant", c8)
+                        u_pa_e = smart_input("PA Email", "Portfolio Assistant Email", c8)
+                        u_tom = smart_input("Take-On Manager", "TakeOn Name", c8)
+                    with c9:
+                        u_bk = smart_input("Bookkeeper", "Bookkeeper", c9)
+                        u_bk_e = smart_input("Bookkeeper Email", "Bookkeeper Email", c9)
 
                     st.markdown("---")
                     
                     if st.form_submit_button("💾 Save Missing Details"):
                         updates = {
+                            # General
                             "Building Code": u_code, "Type": u_type, "No of Units": u_units,
-                            "Year End": u_ye, "Mgmt Fees": u_fees, "Take On Date": u_tod,
-                            "Assigned Manager": u_man, "Manager Email": u_mail, "TakeOn Name": u_tom
+                            "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos,
+                            "Physical Address": u_addr,
+                            # Financial
+                            "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp,
+                            "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod,
+                            "Auditor": u_aud, "Last Audit": u_last_aud,
+                            # Team
+                            "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e,
+                            "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom,
+                            "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e
                         }
                         update_building_details_batch(b_choice, updates)
                         st.cache_data.clear()
@@ -375,6 +413,145 @@ def main():
                 settings = get_data("Settings")
                 s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
 
+                # 1. Custom SARS Section
+                st.markdown("#### SARS")
+                sars_email = s_dict.get("SARS", "")
+                sars_sent_date = get_val("SARS Sent Date")
+                
+                if sars_sent_date and sars_sent_date != "None":
+                    st.success(f"✅ Sent on: {sars_sent_date}")
+                    if st.button("Reset SARS", key="rst_sars_cust"):
+                        update_email_status(b_choice, "SARS Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    tax_num = get_val("Tax Number")
+                    sars_body = f"Dear SARS Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
+                    has_tax_num = tax_num and str(tax_num).lower() not in ['none', 'nan', '']
+                    
+                    if has_tax_num:
+                        st.success(f"📌 **Confirmed Tax Number:** {tax_num}")
+                        sars_body += f"Confirmed Tax Number: {tax_num}\n\n"
+                    else:
+                        st.warning("⚠️ No Tax Number on file.")
+                        sars_option = st.radio("Select Status for Email:", ["Awaiting Tax Number", "Please Register Scheme"], key="sars_rad")
+                        sars_body += f"Note regarding Tax Number: {sars_option}\n\n"
+                    
+                    sars_body += "Regards,\nPretor Take-On Team"
+                    
+                    col_s1, col_s2 = st.columns([1,1])
+                    with col_s1:
+                        if sars_email:
+                            s_sub = urllib.parse.quote(f"Handover: {b_choice} - SARS")
+                            s_bod = urllib.parse.quote(sars_body)
+                            lnk = f'<a href="mailto:{sars_email}?subject={s_sub}&body={s_bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                            st.markdown(lnk, unsafe_allow_html=True)
+                        else:
+                            st.warning("Set SARS Email in Global Settings")
+                    
+                    with col_s2:
+                        if st.button("Mark SARS Sent", key="btn_sars_cust"):
+                            update_email_status(b_choice, "SARS Sent Date")
+                            st.cache_data.clear()
+                            st.rerun()
+                st.divider()
+
+                # 2. CUSTOM COUNCIL SECTION
+                st.markdown("#### Council")
+                
+                council_data = get_data("Council")
+                
+                if not council_data.empty:
+                    rename_map = {
+                        'complex_name': 'Complex Name',
+                        'account_number': 'Account Number',
+                        'service': 'Service',
+                        'balance': 'Balance',
+                        'Complex_Name': 'Complex Name',
+                        'Account_Number': 'Account Number'
+                    }
+                    council_data.rename(columns=rename_map, inplace=True)
+                
+                c_body_str = f"Dear Council Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
+
+                if not council_data.empty and 'Complex Name' in council_data.columns:
+                    curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
+                    
+                    if not curr_council.empty:
+                        st.caption("📝 Edit Account Details Below:")
+                        c_cols = ['id', 'Account Number', 'Service', 'Balance']
+                        c_cols = [c for c in c_cols if c in curr_council.columns]
+                        
+                        edited_council = st.data_editor(
+                            curr_council[c_cols],
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "id": st.column_config.Column(disabled=True, width="small"),
+                                "Balance": st.column_config.NumberColumn(format="R %.2f")
+                            },
+                            key="council_editor"
+                        )
+                        
+                        if st.button("💾 Save Changes to Accounts"):
+                            update_council_batch(edited_council)
+                            st.cache_data.clear()
+                            st.success("Council accounts updated.")
+                            st.rerun()
+                        
+                        for _, acc in curr_council.iterrows():
+                            c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
+                    else:
+                        st.info("No council accounts loaded yet.")
+                        c_body_str += "(No accounts loaded)\n"
+                else:
+                    st.info("No council data available.")
+                    c_body_str += "(No accounts loaded)\n"
+                
+                c_body_str += "\nRegards,\nPretor Take-On Team"
+
+                with st.expander("➕ Add New Council Account", expanded=False):
+                    with st.form("add_c_form", clear_on_submit=True):
+                        c1, c2, c3 = st.columns(3)
+                        an = c1.text_input("Acc Number", key="new_c_an")
+                        sv = c2.text_input("Service", key="new_c_sv")
+                        bl = c3.number_input("Balance", key="new_c_bl")
+                        
+                        if st.form_submit_button("Add Account"):
+                            add_council_account(b_choice, an, sv, bl)
+                            st.cache_data.clear()
+                            st.success("Added")
+                            st.rerun()
+
+                st.markdown("**Council Department Handover Status**")
+                muni_email = s_dict.get("Municipal", "")
+                c_sent_date = get_val("Council Email Sent Date")
+
+                if c_sent_date and c_sent_date != "None":
+                    st.success(f"✅ Sent on: {c_sent_date}")
+                    if st.button("Reset Council Handover", key="rst_council_cust"):
+                        update_email_status(b_choice, "Council Email Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    col_cm1, col_cm2 = st.columns([1,1])
+                    with col_cm1:
+                        if muni_email:
+                            c_sub = urllib.parse.quote(f"Handover: {b_choice} - Council")
+                            c_bod = urllib.parse.quote(c_body_str)
+                            lnk = f'<a href="mailto:{muni_email}?subject={c_sub}&body={c_bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                            st.markdown(lnk, unsafe_allow_html=True)
+                        else:
+                            st.warning("Set Municipal Email in Global Settings")
+                    with col_cm2:
+                        if st.button("Mark Council Sent", key="btn_council_cust"):
+                            update_email_status(b_choice, "Council Email Sent Date")
+                            st.cache_data.clear()
+                            st.rerun()
+                
+                st.divider()
+
+                # 3. Generic Function for REMAINING departments
                 def render_handover_section(dept_name, db_column, email_key, custom_body=None):
                     st.markdown(f"#### {dept_name}")
                     sent_date = get_val(db_column)
@@ -404,24 +581,7 @@ def main():
                                 st.rerun()
                     st.divider()
 
-                # 1. SARS
-                render_handover_section("SARS", "SARS Sent Date", "SARS")
-
-                # 2. Council
-                st.markdown("#### Council")
-                with st.expander("➕ Add Council Account Details"):
-                    with st.form("add_c_new"):
-                        an = st.text_input("Acc Number")
-                        sv = st.text_input("Service")
-                        bl = st.number_input("Balance")
-                        if st.form_submit_button("Add Account"):
-                            add_council_account(b_choice, an, sv, bl)
-                            st.cache_data.clear()
-                            st.success("Added")
-                            st.rerun()
-                render_handover_section("Council", "Council Email Sent Date", "Municipal")
-
-                # 3. Insurance
+                # 4. Insurance
                 st.markdown("#### Insurance")
                 with st.expander("📝 Edit Broker Details"):
                     with st.form("brok_new"):
@@ -436,23 +596,50 @@ def main():
                 st.markdown("**External Broker**")
                 broker_email = get_val("Insurance Broker Email")
                 b_date = get_val("Broker Email Sent Date")
+                
                 if b_date and b_date != "None":
                     st.success(f"Sent: {b_date}")
                 else:
                     if broker_email:
+                        pm_name = get_val("Assigned Manager")
+                        pm_email = get_val("Manager Email")
+                        
+                        broker_body = f"Dear Broker,\n\nPlease take note that Pretor Group has been appointed as the managing agents for {b_choice}.\n\n"
+                        broker_body += "We kindly request the following documents for our records:\n"
+                        broker_body += "1. The latest Insurance Policy Schedule.\n"
+                        broker_body += "2. A 3-year Claims History.\n\n"
+                        broker_body += "Please note that all future communication regarding the insurance should be directed to the appointed Portfolio Manager:\n"
+                        broker_body += f"Name: {pm_name}\nEmail: {pm_email}\n\n"
+                        broker_body += "Regards,\nPretor Take-On Team"
+
                         subj = urllib.parse.quote(f"Insurance Appointment: {b_choice}")
-                        lnk = f'<a href="mailto:{broker_email}?subject={subj}" style="margin-right:15px;">📧 Draft Broker Email</a>'
+                        bod = urllib.parse.quote(broker_body)
+                        
+                        lnk = f'<a href="mailto:{broker_email}?subject={subj}&body={bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Broker Email</a>'
                         st.markdown(lnk, unsafe_allow_html=True)
+                    else:
+                        st.warning("⚠️ No Broker Email Loaded")
+
                     if st.button("Mark Broker Sent"): 
                         update_email_status(b_choice, "Broker Email Sent Date")
                         st.cache_data.clear()
                         st.rerun()
                 
                 st.markdown("**Internal Insurance Dept**")
-                render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
+                
+                ins_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance"
+                internal_ins_body = f"Hi Insurance Team,\n\n"
+                internal_ins_body += f"Please note that {b_choice} is now being managed by Pretor.\n\n"
+                internal_ins_body += f"You can find the latest insurance policy and claims history saved at the following location:\n{ins_path}\n\n"
+                internal_ins_body += "Could you please review these documents and provide us with an insurance quotation?\n\n"
+                internal_ins_body += "Regards,\nPretor Take-On Team"
 
-                # 4. Wages
-                wages_body = f"Dear Wages Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
+                render_handover_section("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", custom_body=internal_ins_body)
+
+                # 5. Wages
+                wages_body = f"Dear Wages Team,\n\nPlease note that the relevant information received from the previous agents regarding salaries and wages can be found at:\n"
+                wages_body += f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\salaries&wages\n\n"
+                wages_body += "Below is a summary of the project details and staff loaded on the system:\n\n"
                 wages_body += "--- PROJECT STATUTORY NUMBERS ---\n"
                 wages_body += f"UIF: {get_val('UIF Number')}\nPAYE: {get_val('PAYE Number')}\nCOIDA: {get_val('COIDA Number')}\n\n"
                 wages_body += "--- STAFF DETAILS ---\n"
@@ -479,13 +666,88 @@ def main():
                 
                 render_handover_section("Wages", "Wages Sent Date", "Wages", custom_body=wages_body)
 
-                # 5. Debt Collection
-                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
+                # 6. Debt Collection (UPDATED)
+                st.markdown("#### Debt Collection")
+                
+                arrears_data = get_data("Arrears")
+                
+                if not arrears_data.empty:
+                    rename_map_arr = {
+                        'complex_name': 'Complex Name',
+                        'unit_number': 'Unit Number',
+                        'outstanding_amount': 'Outstanding Amount',
+                        'attorney_name': 'Attorney Name',
+                        'attorney_email': 'Attorney Email',
+                        'attorney_phone': 'Attorney Phone',
+                        'Complex_Name': 'Complex Name'
+                    }
+                    arrears_data.rename(columns=rename_map_arr, inplace=True)
 
-                # 6. Accounts
-                render_handover_section("Accounts", "Accounts Sent Date", "Accounts")
+                dc_body = f"Dear Debt Collection Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ARREARS LIST ---\n"
+                
+                if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
+                    curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
+                    
+                    if not curr_arrears.empty:
+                        st.caption("📝 Edit Arrears Details Below:")
+                        
+                        arr_cols = ['id', 'Unit Number', 'Outstanding Amount', 'Attorney Name', 'Attorney Email', 'Attorney Phone']
+                        arr_cols = [c for c in arr_cols if c in curr_arrears.columns]
+                        
+                        edited_arrears = st.data_editor(
+                            curr_arrears[arr_cols],
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "id": st.column_config.Column(disabled=True, width="small"),
+                                "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f"),
+                                "Unit Number": st.column_config.TextColumn("Unit No")
+                            },
+                            key="arrears_editor"
+                        )
+                        
+                        if st.button("💾 Save Changes to Arrears"):
+                            update_arrears_batch(edited_arrears)
+                            st.cache_data.clear()
+                            st.success("Arrears updated.")
+                            st.rerun()
+                        
+                        for _, row in curr_arrears.iterrows():
+                            dc_body += f"Unit: {row.get('Unit Number', '')} | Amt: R{row.get('Outstanding Amount', 0)}\n"
+                            dc_body += f"   Attorney: {row.get('Attorney Name', 'None')} ({row.get('Attorney Email', '')} - {row.get('Attorney Phone', '')})\n"
+                            dc_body += "   ----------------------------\n"
+                    else:
+                        st.info("No arrears loaded yet.")
+                        dc_body += "(No arrears loaded)\n"
+                else:
+                    st.info("No arrears data available.")
+                    dc_body += "(No arrears loaded)\n"
+                
+                dc_body += "\nRegards,\nPretor Take-On Team"
 
-                # 7. Fee Confirmation
+                with st.expander("➕ Add New Arrears Record", expanded=False):
+                    with st.form("add_arr_form", clear_on_submit=True):
+                        c1, c2 = st.columns(2)
+                        a_unit = c1.text_input("Unit Number", key="new_a_u")
+                        a_amt = c2.number_input("Outstanding Amount", min_value=0.0, key="new_a_a")
+                        
+                        c3, c4, c5 = st.columns(3)
+                        a_att = c3.text_input("Attorney Name", key="new_a_n")
+                        a_mail = c4.text_input("Attorney Email", key="new_a_e")
+                        a_ph = c5.text_input("Attorney Phone", key="new_a_p")
+                        
+                        if st.form_submit_button("Add Record"):
+                            if a_unit:
+                                add_arrears_item(b_choice, a_unit, a_amt, a_att, a_mail, a_ph)
+                                st.cache_data.clear()
+                                st.success("Added")
+                                st.rerun()
+                            else:
+                                st.error("Unit Number required")
+
+                render_handover_section("Debt Collection", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
+
+                # 8. Fee Confirmation
                 st.markdown("#### Fee Confirmation")
                 pm_email = get_val("Manager Email")
                 fee_body = f"Please confirm the management fees for {b_choice}.\n\nAgreed Fees: {get_val('Mgmt Fees')}"
@@ -509,7 +771,7 @@ def main():
 
                 st.divider()
 
-                # 8. Finalize
+                # 9. Finalize
                 st.markdown("### 🏁 Final Actions")
                 c1, c2 = st.columns(2)
                 with c1:
