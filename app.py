@@ -252,43 +252,70 @@ def main():
                     with open(pdf, "rb") as f:
                         st.download_button("Download PDF", f, file_name=pdf)
 
-            # --- SUB SECTION 2: PROGRESS TRACKER ---
+            # --- SUB SECTION 2: PROGRESS TRACKER (UPDATED) ---
             elif sub_nav == "Progress Tracker":
                 st.markdown("### Checklist")
+                
                 items = get_data("Checklist")
                 if not items.empty:
                     c_items = items[items['Complex Name'] == b_choice].copy()
-                    view = st.radio("View", ["Agent Items", "Internal Items"], horizontal=True)
                     
-                    if view == "Agent Items":
-                        df_view = c_items[c_items['Responsibility'].isin(['Previous Agent', 'Both'])]
-                        cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes']
-                    else:
-                        df_view = c_items
-                        cols = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Completed By', 'Notes', 'Delete']
-                    
-                    df_view['Received'] = df_view['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
-                    if 'Delete' in df_view.columns:
-                         df_view['Delete'] = df_view['Delete'].apply(lambda x: True if str(x).lower() == 'true' else False)
-                    
-                    sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
-                    df_view['Sort'] = df_view['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
-                    df_view = df_view.sort_values(by=['Sort', 'Task Name'])
+                    # Convert 'Received' to strict boolean
+                    c_items['Received'] = c_items['Received'].apply(lambda x: True if str(x).lower() == 'true' else False)
+                    if 'Delete' in c_items.columns:
+                        c_items['Delete'] = c_items['Delete'].apply(lambda x: True if str(x).lower() == 'true' else False)
 
-                    edited = st.data_editor(
-                        df_view[cols], 
-                        hide_index=True, 
-                        height=600,
-                        column_config={
-                            "Task Heading": st.column_config.TextColumn(disabled=True),
-                            "Task Name": st.column_config.TextColumn(disabled=True)
-                        }
-                    )
-                    if st.button("Save Changes"):
-                        save_checklist_batch(b_choice, edited)
-                        st.cache_data.clear()
-                        st.success("Saved!")
-                        st.rerun()
+                    # --- SPLIT INTO PENDING AND COMPLETED ---
+                    # 1. Pending (Editable) - Received is False and Not Deleted
+                    df_pending = c_items[(c_items['Received'] == False) & (c_items['Delete'] != True)]
+                    
+                    # 2. Completed (Locked) - Received is True OR Deleted is True
+                    df_completed = c_items[(c_items['Received'] == True) | (c_items['Delete'] == True)]
+
+                    # --- RENDER PENDING (EDITABLE) ---
+                    st.markdown("#### 📝 Actions Required")
+                    if not df_pending.empty:
+                        # Sorter
+                        sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
+                        df_pending['Sort'] = df_pending['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
+                        df_pending = df_pending.sort_values(by=['Sort', 'Task Name'])
+
+                        # IMPORTANT: Include 'id' in columns so we can save!
+                        cols_editable = ['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']
+                        
+                        edited = st.data_editor(
+                            df_pending[cols_editable], 
+                            hide_index=True, 
+                            height=400,
+                            key="pending_editor",
+                            column_config={
+                                "id": None, # Hide the ID column
+                                "Task Heading": st.column_config.TextColumn(disabled=True),
+                                "Task Name": st.column_config.TextColumn(disabled=True)
+                            }
+                        )
+                        
+                        if st.button("Save Changes"):
+                            save_checklist_batch(b_choice, edited)
+                            st.cache_data.clear()
+                            st.success("Saved! Completed items moved to the locked list.")
+                            st.rerun()
+                    else:
+                        st.success("🎉 All actions completed!")
+
+                    st.divider()
+
+                    # --- RENDER COMPLETED (LOCKED) ---
+                    st.markdown("#### ✅ Completed / Deleted Items (Locked)")
+                    if not df_completed.empty:
+                        st.caption("These items are locked and cannot be edited.")
+                        cols_view = ['Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes']
+                        st.dataframe(df_completed[cols_view], hide_index=True, use_container_width=True)
+                    else:
+                        st.info("No items completed yet.")
+
+                else:
+                    st.info("No checklist loaded for this complex.")
 
             # --- SUB SECTION 3: STAFF DETAILS ---
             elif sub_nav == "Staff Details":
@@ -921,17 +948,6 @@ def main():
                             st.cache_data.clear()
                             st.rerun()
 
-                st.divider()
-
-                # 9. Finalize
-                st.markdown("### 🏁 Final Actions")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Finalize Project"):
-                        finalize_project_db(b_choice)
-                        st.cache_data.clear()
-                        st.balloons()
-
             # --- SUB SECTION 7: CLIENT UPDATES ---
             elif sub_nav == "Client Updates":
                 st.subheader(f"Client Status Update: {b_choice}")
@@ -996,6 +1012,15 @@ def main():
                     st.markdown(lnk, unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Client Email is missing. Please add it in the 'Overview' tab.")
+
+            # --- SUB SECTION 8: FINALIZE ---
+            st.divider()
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Finalize Project"):
+                    finalize_project_db(b_choice)
+                    st.cache_data.clear()
+                    st.balloons()
 
 if __name__ == "__main__":
     main()
