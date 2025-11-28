@@ -414,7 +414,6 @@ def main():
                 
                 arrears_data = get_data("Arrears")
                 
-                # Auto-fix column names for Arrears
                 if not arrears_data.empty:
                     rename_map_arr = {
                         'complex_name': 'Complex Name',
@@ -709,10 +708,9 @@ def main():
                 # 6. Debt Collection (UPDATED)
                 st.markdown("#### Debt Collection & Legal")
                 
-                # Internal Handover Logic
+                # Internal Handover
                 dc_sent_date = get_val("Debt Collection Sent Date")
                 
-                # Internal Email Body Construction
                 arrears_data = get_data("Arrears")
                 if not arrears_data.empty:
                     rename_map_arr = {'complex_name': 'Complex Name', 'unit_number': 'Unit Number', 'outstanding_amount': 'Outstanding Amount', 'attorney_name': 'Attorney Name', 'attorney_email': 'Attorney Email', 'attorney_phone': 'Attorney Phone'}
@@ -735,7 +733,6 @@ def main():
 
                 st.markdown("**Internal Handover**")
                 
-                # Logic for Internal Debt Collection (Lock & Reset)
                 if dc_sent_date and dc_sent_date != "None":
                     st.success(f"✅ Sent on: {dc_sent_date}")
                     if st.button("Unlock (New Units Added)", key="rst_dc_internal"):
@@ -754,10 +751,14 @@ def main():
                         else:
                             st.warning("⚠️ Set Debt Collection Email in Global Settings")
                     with col_b:
+                        # Improved error handling for the button
                         if st.button("Mark Debt Collection Sent", key="btn_dc_internal"):
-                            update_email_status(b_choice, "Debt Collection Sent Date")
-                            st.cache_data.clear()
-                            st.rerun()
+                            res = update_email_status(b_choice, "Debt Collection Sent Date")
+                            if res == "SUCCESS":
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error(f"Update failed: {res}. Check if 'Debt Collection Sent Date' column exists in Supabase.")
 
                 st.divider()
 
@@ -765,7 +766,6 @@ def main():
                 st.markdown("**External Attorney Notifications**")
                 st.caption("Notify attorneys that Pretor is taking over.")
                 
-                # Attorney Status Check
                 att_sent_date = get_val("Attorney Email Sent Date")
                 
                 if att_sent_date and att_sent_date != "None":
@@ -775,7 +775,6 @@ def main():
                         st.cache_data.clear()
                         st.rerun()
                 else:
-                    # Logic to generate individual attorney emails
                     if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
                         curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
                         
@@ -819,12 +818,14 @@ def main():
                                 st.markdown(f'<a href="{mailto_href}" target="_blank" style="text-decoration:none; color:white; background-color:#4CAF50; padding:6px 12px; border-radius:5px; margin-right:10px;">📧 Draft Email to {att_name}</a>', unsafe_allow_html=True)
                                 st.write("") 
                             
-                            # The Mark Sent button only appears if links are visible (not locked)
                             st.divider()
                             if st.button("Mark Attorneys Notified"):
-                                update_email_status(b_choice, "Attorney Email Sent Date")
-                                st.cache_data.clear()
-                                st.rerun()
+                                res = update_email_status(b_choice, "Attorney Email Sent Date")
+                                if res == "SUCCESS":
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error(f"Update failed: {res}. Check if 'Attorney Email Sent Date' column exists in Supabase.")
                         else:
                             st.info("No attorneys loaded in Arrears Details.")
                     else:
