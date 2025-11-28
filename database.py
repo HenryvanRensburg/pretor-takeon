@@ -26,18 +26,19 @@ except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
 
-# --- AUTHENTICATION & LOGGING ---
+# --- AUTHENTICATION ---
 def login_user(email, password):
-    """Attempts to log the user in via Supabase Auth."""
+    """Attempts login. Returns (user_object, error_message)."""
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        return response.user
+        return response.user, None
     except Exception as e:
-        return None
+        # Return the specific error message
+        return None, str(e)
 
 def log_access(user_email):
-    """Records the login time and user in the database."""
     try:
+        # Ensure table 'LoginLogs' exists in Supabase
         supabase.table("LoginLogs").insert({"user_email": user_email}).execute()
     except Exception as e:
         print(f"Logging failed: {e}")
@@ -51,23 +52,18 @@ def get_data(table_name):
     except Exception as e:
         return pd.DataFrame()
 
-# --- CHECKLIST (UPDATED WITH USER TRACKING) ---
+# --- CHECKLIST ---
 def save_checklist_batch(complex_name, edited_df, current_user_email):
-    """Updates checklist items and records WHO completed them."""
     try:
         records = edited_df.to_dict('records')
         for row in records:
             if row.get('id'):
                 update_data = {k: v for k, v in row.items() if k != 'id'}
-                
-                # If item is marked Received, tag the user
                 if str(row.get('Received')).lower() == 'true':
                     update_data['Completed By'] = current_user_email
-                
                 supabase.table("Checklist").update(update_data).eq("id", row['id']).execute()
         return "SUCCESS"
-    except Exception as e:
-        return str(e)
+    except Exception as e: return str(e)
 
 # --- PROJECTS ---
 def create_new_building(data):
