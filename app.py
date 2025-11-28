@@ -411,6 +411,7 @@ def main():
                 
                 arrears_data = get_data("Arrears")
                 
+                # Auto-fix column names for Arrears
                 if not arrears_data.empty:
                     rename_map_arr = {
                         'complex_name': 'Complex Name',
@@ -419,7 +420,8 @@ def main():
                         'attorney_name': 'Attorney Name',
                         'attorney_email': 'Attorney Email',
                         'attorney_phone': 'Attorney Phone',
-                        'Complex_Name': 'Complex Name'
+                        'Complex_Name': 'Complex Name',
+                        'Unit Number': 'Unit Number'
                     }
                     arrears_data.rename(columns=rename_map_arr, inplace=True)
 
@@ -476,21 +478,27 @@ def main():
                             else:
                                 st.error("Unit Number required")
 
-            # --- SUB SECTION 5: COUNCIL DETAILS (NEW) ---
+            # --- SUB SECTION 5: COUNCIL DETAILS (NEW FIX) ---
             elif sub_nav == "Council Details":
                 st.subheader(f"Council Management: {b_choice}")
                 st.markdown("Manage municipal accounts for this complex.")
                 
                 council_data = get_data("Council")
                 
+                # --- ROBUST COLUMN RENAMING FOR COUNCIL ---
                 if not council_data.empty:
+                    # Strip whitespace from column names first
+                    council_data.columns = [c.strip() for c in council_data.columns]
+                    
                     rename_map = {
                         'complex_name': 'Complex Name',
                         'account_number': 'Account Number',
                         'service': 'Service',
                         'balance': 'Balance',
-                        'Complex_Name': 'Complex Name',
-                        'Account_Number': 'Account Number'
+                        'Complex Name': 'Complex Name', # self-map to be safe
+                        'Account Number': 'Account Number',
+                        'complex name': 'Complex Name',
+                        'account number': 'Account Number'
                     }
                     council_data.rename(columns=rename_map, inplace=True)
                 
@@ -519,9 +527,9 @@ def main():
                             st.success("Council accounts updated.")
                             st.rerun()
                     else:
-                        st.info("No council accounts loaded yet.")
+                        st.info(f"No council accounts found for {b_choice}.")
                 else:
-                    st.info("No council data available.")
+                    st.info("No council data available in the database.")
 
                 st.divider()
 
@@ -595,14 +603,25 @@ def main():
                 
                 # Fetch Data for Email Body
                 council_data = get_data("Council")
+                
+                # --- REPEAT RENAMING FOR CONSISTENCY ---
                 if not council_data.empty:
-                    rename_map = {'complex_name': 'Complex Name','account_number': 'Account Number','service': 'Service','balance': 'Balance'}
+                    council_data.columns = [c.strip() for c in council_data.columns]
+                    rename_map = {
+                        'complex_name': 'Complex Name', 'account_number': 'Account Number',
+                        'service': 'Service', 'balance': 'Balance',
+                        'complex name': 'Complex Name', 'account number': 'Account Number'
+                    }
                     council_data.rename(columns=rename_map, inplace=True)
                 
                 c_body_str = f"Dear Council Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
+                
+                # Safe checking
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     if not curr_council.empty:
+                        # Display Read-only list
+                        st.dataframe(curr_council[['Account Number', 'Service', 'Balance']], hide_index=True)
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
