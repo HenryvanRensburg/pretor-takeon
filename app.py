@@ -618,6 +618,7 @@ def main():
                 council_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council"
                 
                 c_body_str = f"Dear Council Team,\n\nPlease note that the latest council accounts and documents received from the previous agents can be found at the following location:\n{council_path}\n\n"
+                c_body_str += "Please load these accounts onto the Pretor Council Portal and confirm once this has been completed.\n\n"
                 c_body_str += f"Please proceed with the handover for {b_choice}.\n\n--- ACCOUNTS LIST ---\n"
                 
                 if not council_data.empty and 'Complex Name' in council_data.columns:
