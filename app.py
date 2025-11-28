@@ -337,15 +337,13 @@ def main():
                             else:
                                 st.info("No pending items for Previous Agent.")
                         else:
-                            # LOGIC FOR COMPLETED AGENT HANDOVER
-                            # Find the last received date from agent items
+                            # --- AGENT HANDOVER COMPLETE ---
                             agent_completed_items = c_items[
                                 (c_items['Responsibility'].isin(['Previous Agent', 'Both'])) & 
                                 (c_items['Received'] == True)
                             ]
                             
                             if not agent_completed_items.empty:
-                                # Safely find max date (handling mixed formats/strings)
                                 try:
                                     last_date = pd.to_datetime(agent_completed_items['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
                                 except:
@@ -354,6 +352,26 @@ def main():
                                 if last_date == "NaT": last_date = "Unknown Date"
 
                                 st.success(f"✅ All items received from Previous Agent! Last document received on: **{last_date}**")
+                                
+                                # --- COMPLETION EMAIL TO CLIENT ---
+                                st.divider()
+                                st.markdown("#### 🚀 Take-On Complete: Notify Client")
+                                client_email_addr = get_val("Client Email")
+                                
+                                if client_email_addr and client_email_addr != "None":
+                                    comp_body = f"Dear Client,\n\n"
+                                    comp_body += f"We are pleased to confirm that the take-on process for {b_choice} has been successfully completed.\n\n"
+                                    comp_body += "All relevant information has been received and filed accordingly.\n\n"
+                                    comp_body += "We appreciate the trust you have placed in Pretor Group. We undertake to ensure that the complex is managed with the utmost integrity going forward.\n\n"
+                                    comp_body += "Regards,\nPretor Take-On Team"
+                                    
+                                    comp_sub = urllib.parse.quote(f"Take-On Completed: {b_choice}")
+                                    comp_bod_enc = urllib.parse.quote(comp_body)
+                                    comp_link = f'<a href="mailto:{client_email_addr}?subject={comp_sub}&body={comp_bod_enc}" target="_blank" style="text-decoration:none; color:white; background-color:#09ab3b; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Draft Completion Email to Client</a>'
+                                    st.markdown(comp_link, unsafe_allow_html=True)
+                                else:
+                                    st.warning("⚠️ Client Email missing in Overview tab. Cannot generate completion email.")
+
                             else:
                                 st.info("No items assigned to Previous Agent.")
 
@@ -613,14 +631,10 @@ def main():
                 if not council_data.empty:
                     council_data.columns = [c.strip() for c in council_data.columns]
                     rename_map = {
-                        'complex_name': 'Complex Name',
-                        'account_number': 'Account Number',
-                        'service': 'Service',
-                        'balance': 'Balance',
-                        'Complex Name': 'Complex Name',
-                        'Account Number': 'Account Number',
-                        'complex name': 'Complex Name',
-                        'account number': 'Account Number'
+                        'complex_name': 'Complex Name', 'account_number': 'Account Number',
+                        'service': 'Service', 'balance': 'Balance',
+                        'Complex Name': 'Complex Name', 'Account Number': 'Account Number',
+                        'complex name': 'Complex Name', 'account number': 'Account Number'
                     }
                     council_data.rename(columns=rename_map, inplace=True)
                 
@@ -1068,6 +1082,7 @@ def main():
                     c_items = checklist[checklist['Complex Name'] == b_choice]
                     if not c_items.empty:
                         # Received
+                        # Use loose string matching for "true"
                         rec_items = c_items[c_items['Received'].astype(str).str.lower() == 'true']
                         if not rec_items.empty:
                             for _, r in rec_items.iterrows():
@@ -1075,7 +1090,7 @@ def main():
                         else:
                             received_list += "(None yet)\n"
                         
-                        # Outstanding
+                        # Outstanding (Not received AND not deleted)
                         out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
                         if not out_items.empty:
                             for _, r in out_items.iterrows():
