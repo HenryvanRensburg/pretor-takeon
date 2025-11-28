@@ -88,7 +88,7 @@ def main():
             wages = st.text_input("Wages", value=s_dict.get("Wages", ""))
             sars = st.text_input("SARS", value=s_dict.get("SARS", ""))
             muni = st.text_input("Municipal", value=s_dict.get("Municipal", ""))
-            debt = st.text_input("Debt Collection (Legal)", value=s_dict.get("Debt Collection", ""))
+            debt = st.text_input("Debt Collection", value=s_dict.get("Debt Collection", ""))
             ins = st.text_input("Insurance", value=s_dict.get("Insurance", ""))
             acc = st.text_input("Accounts", value=s_dict.get("Accounts", ""))
             if st.form_submit_button("Save"):
@@ -709,8 +709,10 @@ def main():
                 # 6. Debt Collection (UPDATED)
                 st.markdown("#### Debt Collection & Legal")
                 
-                # Internal Handover
-                st.markdown("**Internal Handover**")
+                # Internal Handover Logic
+                dc_sent_date = get_val("Debt Collection Sent Date")
+                
+                # Internal Email Body Construction
                 arrears_data = get_data("Arrears")
                 if not arrears_data.empty:
                     rename_map_arr = {'complex_name': 'Complex Name', 'unit_number': 'Unit Number', 'outstanding_amount': 'Outstanding Amount', 'attorney_name': 'Attorney Name', 'attorney_email': 'Attorney Email', 'attorney_phone': 'Attorney Phone'}
@@ -730,65 +732,103 @@ def main():
                     dc_body += "(No arrears loaded)\n"
                 
                 dc_body += "\nRegards,\nPretor Take-On Team"
-                render_handover_section("Debt Collection (Internal)", "Debt Collection Sent Date", "Debt Collection", custom_body=dc_body)
+
+                st.markdown("**Internal Handover**")
+                
+                # Logic for Internal Debt Collection (Lock & Reset)
+                if dc_sent_date and dc_sent_date != "None":
+                    st.success(f"✅ Sent on: {dc_sent_date}")
+                    if st.button("Unlock (New Units Added)", key="rst_dc_internal"):
+                        update_email_status(b_choice, "Debt Collection Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    target_email = s_dict.get("Debt Collection", "")
+                    col_a, col_b = st.columns([1, 1])
+                    with col_a:
+                        if target_email:
+                            subject = urllib.parse.quote(f"Handover: {b_choice} - Debt Collection")
+                            body = urllib.parse.quote(dc_body)
+                            link = f'<a href="mailto:{target_email}?subject={subject}&body={body}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                            st.markdown(link, unsafe_allow_html=True)
+                        else:
+                            st.warning("⚠️ Set Debt Collection Email in Global Settings")
+                    with col_b:
+                        if st.button("Mark Debt Collection Sent", key="btn_dc_internal"):
+                            update_email_status(b_choice, "Debt Collection Sent Date")
+                            st.cache_data.clear()
+                            st.rerun()
+
+                st.divider()
 
                 # External Attorney Notifications
                 st.markdown("**External Attorney Notifications**")
                 st.caption("Notify attorneys that Pretor is taking over.")
                 
-                if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
-                    curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
-                    
-                    if not curr_arrears.empty:
-                        # Find unique attorneys with valid emails
-                        attorneys = curr_arrears.dropna(subset=['Attorney Email'])
-                        unique_emails = attorneys['Attorney Email'].unique()
-                        
-                        legal_dept_email = s_dict.get("Debt Collection", "")
-                        pm_name = get_val("Assigned Manager")
-                        pm_email = get_val("Manager Email")
-
-                        for att_email in unique_emails:
-                            if not att_email: continue
-                            
-                            # Get specific attorney data
-                            att_rows = curr_arrears[curr_arrears['Attorney Email'] == att_email]
-                            att_name = att_rows.iloc[0].get('Attorney Name', 'Attorney')
-                            
-                            # Build Email
-                            att_body = f"Dear {att_name},\n\n"
-                            att_body += f"Please be advised that Pretor Group has been appointed as the managing agents for {b_choice}.\n\n"
-                            att_body += "We note that you are currently handling collections for the following units:\n"
-                            for _, r in att_rows.iterrows():
-                                att_body += f"- Unit {r['Unit Number']} (Outstanding: R{r.get('Outstanding Amount',0)})\n"
-                            
-                            att_body += "\nPlease direct all future communication regarding these matters to our Legal Department and the appointed Portfolio Manager:\n\n"
-                            att_body += f"**Legal Department:** {legal_dept_email}\n"
-                            att_body += f"**Portfolio Manager:** {pm_name} ({pm_email})\n\n"
-                            att_body += "Regards,\nPretor Take-On Team"
-                            
-                            # Build Mailto Link with CC
-                            # mailto:to?cc=cc&subject=sub&body=body
-                            att_sub = urllib.parse.quote(f"Handover: {b_choice} - Pretor Group Appointment")
-                            att_bod = urllib.parse.quote(att_body)
-                            
-                            # CC string (comma separated)
-                            cc_list = []
-                            if legal_dept_email: cc_list.append(legal_dept_email)
-                            if pm_email: cc_list.append(pm_email)
-                            cc_str = ",".join(cc_list)
-                            
-                            # Mailto construction
-                            mailto_href = f"mailto:{att_email}?subject={att_sub}&body={att_bod}"
-                            if cc_str:
-                                mailto_href += f"&cc={cc_str}"
-                                
-                            st.markdown(f'<a href="{mailto_href}" target="_blank" style="text-decoration:none; color:white; background-color:#4CAF50; padding:6px 12px; border-radius:5px; margin-right:10px;">📧 Draft Email to {att_name}</a>', unsafe_allow_html=True)
-                            st.write("") # Spacer
-                    else:
-                        st.info("No attorneys loaded in Arrears Details.")
+                # Attorney Status Check
+                att_sent_date = get_val("Attorney Email Sent Date")
+                
+                if att_sent_date and att_sent_date != "None":
+                    st.success(f"✅ Attorneys Notified on {att_sent_date}")
+                    if st.button("Unlock (New Units Added)", key="rst_att_ext"):
+                        update_email_status(b_choice, "Attorney Email Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
                 else:
-                    st.info("No arrears data found.")
+                    # Logic to generate individual attorney emails
+                    if not arrears_data.empty and 'Complex Name' in arrears_data.columns:
+                        curr_arrears = arrears_data[arrears_data['Complex Name'] == b_choice].copy()
+                        
+                        if not curr_arrears.empty:
+                            attorneys = curr_arrears.dropna(subset=['Attorney Email'])
+                            unique_emails = attorneys['Attorney Email'].unique()
+                            
+                            legal_dept_email = s_dict.get("Debt Collection", "")
+                            pm_name = get_val("Assigned Manager")
+                            pm_email = get_val("Manager Email")
+
+                            for att_email in unique_emails:
+                                if not att_email: continue
+                                
+                                att_rows = curr_arrears[curr_arrears['Attorney Email'] == att_email]
+                                att_name = att_rows.iloc[0].get('Attorney Name', 'Attorney')
+                                
+                                att_body = f"Dear {att_name},\n\n"
+                                att_body += f"Please be advised that Pretor Group has been appointed as the managing agents for {b_choice}.\n\n"
+                                att_body += "We note that you are currently handling collections for the following units:\n"
+                                for _, r in att_rows.iterrows():
+                                    att_body += f"- Unit {r['Unit Number']} (Outstanding: R{r.get('Outstanding Amount',0)})\n"
+                                
+                                att_body += "\nPlease direct all future communication regarding these matters to our Legal Department and the appointed Portfolio Manager:\n\n"
+                                att_body += f"**Legal Department:** {legal_dept_email}\n"
+                                att_body += f"**Portfolio Manager:** {pm_name} ({pm_email})\n\n"
+                                att_body += "Regards,\nPretor Take-On Team"
+                                
+                                att_sub = urllib.parse.quote(f"Handover: {b_choice} - Pretor Group Appointment")
+                                att_bod = urllib.parse.quote(att_body)
+                                
+                                cc_list = []
+                                if legal_dept_email: cc_list.append(legal_dept_email)
+                                if pm_email: cc_list.append(pm_email)
+                                cc_str = ",".join(cc_list)
+                                
+                                mailto_href = f"mailto:{att_email}?subject={att_sub}&body={att_bod}"
+                                if cc_str:
+                                    mailto_href += f"&cc={cc_str}"
+                                    
+                                st.markdown(f'<a href="{mailto_href}" target="_blank" style="text-decoration:none; color:white; background-color:#4CAF50; padding:6px 12px; border-radius:5px; margin-right:10px;">📧 Draft Email to {att_name}</a>', unsafe_allow_html=True)
+                                st.write("") 
+                            
+                            # The Mark Sent button only appears if links are visible (not locked)
+                            st.divider()
+                            if st.button("Mark Attorneys Notified"):
+                                update_email_status(b_choice, "Attorney Email Sent Date")
+                                st.cache_data.clear()
+                                st.rerun()
+                        else:
+                            st.info("No attorneys loaded in Arrears Details.")
+                    else:
+                        st.info("No arrears data found.")
 
                 st.divider()
 
