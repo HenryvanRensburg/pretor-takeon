@@ -279,7 +279,6 @@ def main():
                     
                     # DATE AUTO-FILLER HELPER
                     def fill_date_if_received(row):
-                        # If Received is Checked AND Date is missing -> Insert Today
                         if row['Received'] and (pd.isna(row['Date Received']) or str(row['Date Received']).strip() == ''):
                             return str(datetime.now().date())
                         return row['Date Received']
@@ -304,7 +303,6 @@ def main():
                                     }
                                 )
                                 if st.button("Save Agent Items"):
-                                    # APPLY AUTO-DATE LOGIC
                                     edited_agent['Date Received'] = edited_agent.apply(fill_date_if_received, axis=1)
                                     save_checklist_batch(b_choice, edited_agent)
                                     st.cache_data.clear()
@@ -335,7 +333,6 @@ def main():
                                     }
                                 )
                                 if st.button("Save Internal Items"):
-                                    # APPLY AUTO-DATE LOGIC
                                     edited_internal['Date Received'] = edited_internal.apply(fill_date_if_received, axis=1)
                                     save_checklist_batch(b_choice, edited_internal)
                                     st.cache_data.clear()
@@ -560,29 +557,22 @@ def main():
                             else:
                                 st.error("Unit Number required")
 
-            # --- SUB SECTION 5: COUNCIL DETAILS (FIXED) ---
+            # --- SUB SECTION 5: COUNCIL DETAILS ---
             elif sub_nav == "Council Details":
                 st.subheader(f"Council Management: {b_choice}")
                 st.markdown("Manage municipal accounts for this complex.")
                 
-                # Fetch both 'Council' and 'council' to be safe
                 council_data = get_data("Council")
                 if council_data.empty:
                     council_data = get_data("council")
                 
                 if not council_data.empty:
-                    # Clean column names (strip spaces, normalize)
                     council_data.columns = [c.strip() for c in council_data.columns]
-                    
                     rename_map = {
-                        'complex_name': 'Complex Name',
-                        'account_number': 'Account Number',
-                        'service': 'Service',
-                        'balance': 'Balance',
-                        'Complex Name': 'Complex Name',
-                        'Account Number': 'Account Number',
-                        'complex name': 'Complex Name',
-                        'account number': 'Account Number'
+                        'complex_name': 'Complex Name', 'account_number': 'Account Number',
+                        'service': 'Service', 'balance': 'Balance',
+                        'Complex Name': 'Complex Name', 'Account Number': 'Account Number',
+                        'complex name': 'Complex Name', 'account number': 'Account Number'
                     }
                     council_data.rename(columns=rename_map, inplace=True)
                 
@@ -708,7 +698,6 @@ def main():
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     if not curr_council.empty:
-                        # Only adding data to the string here, VISUAL GRID REMOVED from this section
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
@@ -1069,15 +1058,6 @@ def main():
                     st.markdown(lnk, unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Client Email is missing. Please add it in the 'Overview' tab.")
-
-            # --- SUB SECTION 8: FINALIZE ---
-            st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Finalize Project"):
-                    finalize_project_db(b_choice)
-                    st.cache_data.clear()
-                    st.balloons()
 
 if __name__ == "__main__":
     main()
