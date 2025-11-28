@@ -624,8 +624,7 @@ def main():
                 if not council_data.empty and 'Complex Name' in council_data.columns:
                     curr_council = council_data[council_data['Complex Name'] == b_choice].copy()
                     if not curr_council.empty:
-                        # Display Read-only list
-                        st.dataframe(curr_council[['Account Number', 'Service', 'Balance']], hide_index=True)
+                        # Only adding data to the string here, VISUAL GRID REMOVED from this section
                         for _, acc in curr_council.iterrows():
                             c_body_str += f"Acc: {acc.get('Account Number','')} | Svc: {acc.get('Service','')} | Bal: R{acc.get('Balance', 0)}\n"
                     else:
