@@ -45,28 +45,62 @@ class HandoverReport(FPDF):
         self.cell(0, 8, self.clean_text(label), 0, 1, 'L', 1)
         self.ln(2)
 
-    def entry_row(self, label, value):
+    def sub_section_title(self, label):
         self.set_font('Arial', 'B', 10)
-        self.cell(50, 6, self.clean_text(label), 0)
-        self.set_font('Arial', '', 10)
-        self.multi_cell(0, 6, self.clean_text(str(value)))
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 6, self.clean_text(label), 0, 1, 'L')
+        self.set_text_color(0, 0, 0)
+
+    def entry_row(self, label, value):
+        self.set_font('Arial', 'B', 9)
+        self.cell(55, 5, self.clean_text(label), 0)
+        self.set_font('Arial', '', 9)
+        self.multi_cell(0, 5, self.clean_text(str(value)))
 
 def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_df, council_df):
     pdf = HandoverReport()
     pdf.add_page()
     
-    # 1. OVERVIEW
+    # --- 1. OVERVIEW (ALL FIELDS) ---
     pdf.section_title(f"1. Overview: {complex_name}")
     pdf.ln(2)
-    overview_fields = {
-        "Building Code": "Building Code", "Type": "Type", "Units": "No of Units",
-        "Year End": "Year End", "Address": "Physical Address",
-        "Portfolio Manager": "Assigned Manager", "PM Email": "Manager Email",
-        "Bookkeeper": "Bookkeeper", "Tax Number": "Tax Number", "VAT Number": "VAT Number"
+
+    # A. General
+    pdf.sub_section_title("General & Address")
+    general_data = {
+        "Building Code": "Building Code", "Type": "Type", "No of Units": "No of Units",
+        "SS Number": "SS Number", "Erf Number": "Erf Number", "CSOS Number": "CSOS Number",
+        "Physical Address": "Physical Address"
     }
-    for label, db_col in overview_fields.items():
-        val = p_row.get(db_col, 'N/A')
-        pdf.entry_row(label + ":", val)
+    for label, db_col in general_data.items():
+        val = p_row.get(db_col, '')
+        if val and val != 'None': pdf.entry_row(label + ":", val)
+    pdf.ln(2)
+
+    # B. Financial
+    pdf.sub_section_title("Financial & Compliance")
+    fin_data = {
+        "Year End": "Year End", "Mgmt Fees": "Mgmt Fees", "Expense Code": "Expense Code",
+        "VAT Number": "VAT Number", "Tax Number": "Tax Number", "Take On Date": "Take On Date",
+        "Auditor": "Auditor", "Last Audit": "Last Audit"
+    }
+    for label, db_col in fin_data.items():
+        val = p_row.get(db_col, '')
+        if val and val != 'None': pdf.entry_row(label + ":", val)
+    pdf.ln(2)
+
+    # C. Team
+    pdf.sub_section_title("The Team")
+    team_data = {
+        "Portfolio Manager": "Assigned Manager", "PM Email": "Manager Email",
+        "Portfolio Assistant": "Portfolio Assistant", "PA Email": "Portfolio Assistant Email",
+        "Bookkeeper": "Bookkeeper", "Bookkeeper Email": "Bookkeeper Email",
+        "Take-On Manager": "TakeOn Name", "Client Email": "Client Email"
+    }
+    for label, db_col in team_data.items():
+        val = p_row.get(db_col, '')
+        if val and val != 'None': pdf.entry_row(label + ":", val)
+    
     pdf.ln(5)
 
     # 2. PREVIOUS AGENT
@@ -82,14 +116,12 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 t_name = pdf.clean_text(row['Task Name'])
                 d_rec = pdf.clean_text(str(row.get('Date Received', '')))
                 notes = f" (Note: {pdf.clean_text(str(row['Notes']))})" if row['Notes'] else ""
-                pdf.cell(10)
+                pdf.cell(5)
                 pdf.multi_cell(0, 5, f"- {t_name}{notes} [Received: {d_rec}]")
         else:
-            pdf.set_font("Arial", "I", 9)
-            pdf.cell(0, 6, "No items marked as received from agent yet.", 0, 1)
-    else:
-        pdf.cell(0, 6, "No checklist data.", 0, 1)
-    pdf.ln(5)
+            pdf.set_font("Arial", "I", 9); pdf.cell(0, 6, "No items marked as received from agent yet.", 0, 1)
+    else: pdf.cell(0, 6, "No checklist data.", 0, 1)
+    pdf.ln(4)
 
     # 3. INTERNAL
     pdf.section_title("3. Internal Pretor Actions Completed")
@@ -102,14 +134,12 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             pdf.set_font("Arial", "", 9)
             for _, row in pretor_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
-                pdf.cell(10)
+                pdf.cell(5)
                 pdf.multi_cell(0, 5, f"- {t_name} (Completed)")
         else:
-            pdf.set_font("Arial", "I", 9)
-            pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
-    else:
-        pdf.cell(0, 6, "No checklist data.", 0, 1)
-    pdf.ln(5)
+            pdf.set_font("Arial", "I", 9); pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
+    else: pdf.cell(0, 6, "No checklist data.", 0, 1)
+    pdf.ln(4)
 
     # 4. STAFF
     pdf.section_title("4. Staff & Wages Loaded")
@@ -117,10 +147,10 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
         c_emp = emp_df[emp_df['Complex Name'] == complex_name]
         if not c_emp.empty:
             pdf.set_font("Arial", "B", 8)
-            pdf.cell(50, 6, "Name", 1)
+            pdf.cell(60, 6, "Name", 1)
             pdf.cell(50, 6, "Position", 1)
             pdf.cell(30, 6, "Salary", 1)
-            pdf.cell(30, 6, "Docs?", 1)
+            pdf.cell(20, 6, "Docs?", 1)
             pdf.ln()
             pdf.set_font("Arial", "", 8)
             for _, row in c_emp.iterrows():
@@ -128,16 +158,14 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 pos = pdf.clean_text(str(row.get('Position','')))
                 sal = f"R {row.get('Salary',0)}"
                 has_docs = "Yes" if str(row.get('Contract Received', 'False')).lower() == 'true' else "No"
-                pdf.cell(50, 6, name, 1)
+                pdf.cell(60, 6, name, 1)
                 pdf.cell(50, 6, pos, 1)
                 pdf.cell(30, 6, sal, 1)
-                pdf.cell(30, 6, has_docs, 1)
+                pdf.cell(20, 6, has_docs, 1)
                 pdf.ln()
-        else:
-            pdf.cell(0, 6, "No staff loaded.", 0, 1)
-    else:
-        pdf.cell(0, 6, "No staff data.", 0, 1)
-    pdf.ln(5)
+        else: pdf.cell(0, 6, "No staff loaded.", 0, 1)
+    else: pdf.cell(0, 6, "No staff data.", 0, 1)
+    pdf.ln(4)
 
     # 5. ARREARS
     pdf.section_title("5. Arrears Handover")
@@ -158,11 +186,9 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 pdf.cell(40, 6, amt, 1)
                 pdf.cell(90, 6, att, 1)
                 pdf.ln()
-        else:
-            pdf.cell(0, 6, "No arrears loaded.", 0, 1)
-    else:
-        pdf.cell(0, 6, "No arrears data.", 0, 1)
-    pdf.ln(5)
+        else: pdf.cell(0, 6, "No arrears loaded.", 0, 1)
+    else: pdf.cell(0, 6, "No arrears data.", 0, 1)
+    pdf.ln(4)
 
     # 6. COUNCIL
     pdf.section_title("6. Council Accounts")
@@ -171,7 +197,7 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
         if not c_coun.empty:
             pdf.set_font("Arial", "B", 8)
             pdf.cell(60, 6, "Account Number", 1)
-            pdf.cell(50, 6, "Service", 1)
+            pdf.cell(60, 6, "Service", 1)
             pdf.cell(40, 6, "Balance", 1)
             pdf.ln()
             pdf.set_font("Arial", "", 8)
@@ -180,18 +206,16 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 svc = pdf.clean_text(str(row.get('Service','')))
                 bal = f"R {row.get('Balance',0)}"
                 pdf.cell(60, 6, acc, 1)
-                pdf.cell(50, 6, svc, 1)
+                pdf.cell(60, 6, svc, 1)
                 pdf.cell(40, 6, bal, 1)
                 pdf.ln()
-        else:
-            pdf.cell(0, 6, "No council accounts loaded.", 0, 1)
-    else:
-        pdf.cell(0, 6, "No council data.", 0, 1)
-    pdf.ln(5)
+        else: pdf.cell(0, 6, "No council accounts loaded.", 0, 1)
+    else: pdf.cell(0, 6, "No council data.", 0, 1)
+    pdf.ln(4)
 
     # 7. DATES
     pdf.section_title("7. Internal Department Handover Dates")
-    pdf.set_font("Arial", "", 10)
+    pdf.set_font("Arial", "", 9)
     handovers = {
         "Wages Dept": p_row.get("Wages Sent Date"),
         "Council Dept": p_row.get("Council Email Sent Date"),
@@ -445,7 +469,6 @@ def main():
             # --- SUB SECTION 2: PROGRESS TRACKER ---
             elif sub_nav == "Progress Tracker":
                 st.markdown("### Checklist")
-                
                 items = get_data("Checklist")
                 if not items.empty:
                     c_items = items[items['Complex Name'] == b_choice].copy()
@@ -507,15 +530,13 @@ def main():
                             else:
                                 st.info("No pending items for Previous Agent.")
                         else:
-                            # --- HANDOVER COMPLETE ---
                             agent_completed_items = c_items[
                                 (c_items['Responsibility'].isin(['Previous Agent', 'Both'])) & 
                                 (c_items['Received'] == True)
                             ]
                             
                             if not agent_completed_items.empty:
-                                try:
-                                    last_date = pd.to_datetime(agent_completed_items['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
+                                try: last_date = pd.to_datetime(agent_completed_items['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
                                 except: last_date = "Unknown"
                                 if last_date == "NaT": last_date = "Unknown"
 
@@ -525,19 +546,14 @@ def main():
                                 st.markdown("#### 🚀 Take-On Complete: Notify Client")
                                 
                                 comp_sent_date = get_val("Client Completion Email Sent Date")
+                                report_gen_date = get_val("Client Report Generated Date")
                                 client_email_addr = get_val("Client Email")
                                 
-                                # Check for Report Lock Date
-                                report_gen_date = get_val("Client Report Generated Date")
-                                
-                                # --- STEP 1: PDF GENERATION ---
+                                # STEP 1: REPORT
                                 st.markdown("**Step 1: Generate Handover Report**")
                                 
                                 if report_gen_date and report_gen_date != "None":
-                                    # LOCKED STATE
                                     st.success(f"✅ Report Generated on: {report_gen_date}")
-                                    
-                                    # Allow download copy
                                     emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
                                     pdf_file = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
                                     with open(pdf_file, "rb") as f:
@@ -548,17 +564,14 @@ def main():
                                         st.cache_data.clear()
                                         st.rerun()
                                 else:
-                                    # UNLOCKED STATE
                                     if st.button("📄 Generate & Lock Report", key="btn_gen_lock_rep"):
-                                        # 1. Generate
                                         emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
-                                        pdf_file = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
-                                        # 2. Lock
+                                        create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
                                         update_email_status(b_choice, "Client Report Generated Date")
                                         st.cache_data.clear()
                                         st.rerun()
 
-                                # --- STEP 2: EMAIL CLIENT ---
+                                # STEP 2: EMAIL
                                 st.markdown("**Step 2: Send Email**")
                                 if comp_sent_date and comp_sent_date != "None":
                                     st.success(f"✅ Completion Email Sent on: {comp_sent_date}")
@@ -625,15 +638,7 @@ def main():
             # --- SUB SECTION 3: STAFF DETAILS ---
             elif sub_nav == "Staff Details":
                 st.subheader(f"Staff Management: {b_choice}")
-                # ... (Identical to previous code) ...
-                # I am condensing these sections to fit the length limit, 
-                # PLEASE KEEP THE FULL CODE FROM THE PREVIOUS RESPONSE FOR:
-                # - Staff Details
-                # - Arrears Details
-                # - Council Details
-                # - Department Handovers
-                
-                # For this specific response, I will paste the Staff Details full code to be safe:
+                # Same as before
                 uif_val = get_val("UIF Number") if "UIF Number" in p_row.index else ""
                 paye_val = get_val("PAYE Number") if "PAYE Number" in p_row.index else ""
                 coida_val = get_val("COIDA Number") if "COIDA Number" in p_row.index else ""
@@ -691,7 +696,6 @@ def main():
             # --- SUB SECTION 4: ARREARS DETAILS ---
             elif sub_nav == "Arrears Details":
                 st.subheader(f"Arrears Management: {b_choice}")
-                # Same as before
                 arrears_data = get_data("Arrears")
                 if not arrears_data.empty:
                     rename_map_arr = {'complex_name': 'Complex Name', 'unit_number': 'Unit Number', 'outstanding_amount': 'Outstanding Amount', 'attorney_name': 'Attorney Name', 'attorney_email': 'Attorney Email', 'attorney_phone': 'Attorney Phone'}
@@ -718,7 +722,6 @@ def main():
             # --- SUB SECTION 5: COUNCIL DETAILS ---
             elif sub_nav == "Council Details":
                 st.subheader(f"Council Management: {b_choice}")
-                # Same as before
                 council_data = get_data("Council")
                 if council_data.empty: council_data = get_data("council")
                 if not council_data.empty:
@@ -745,39 +748,179 @@ def main():
 
             # --- SUB SECTION 6: DEPARTMENT HANDOVERS ---
             elif sub_nav == "Department Handovers":
-                # ... (All same logic for SARS, Council, Insurance, Wages, Debt, Fee) ...
-                # Keeping it concise here to ensure the previous logic for Progress Tracker fits
-                # but this section MUST remain exactly as it was in the previous functional version.
-                # For this output, I will abbreviate but please use the previous code for this section.
                 st.markdown("### Department Handovers")
-                settings = get_data("Settings"); s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
-                
-                # 1. SARS
+                settings = get_data("Settings")
+                s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
+
+                # SARS
                 st.markdown("#### SARS")
-                sars_sent = get_val("SARS Sent Date")
-                if sars_sent and sars_sent != "None":
-                    st.success(f"✅ Sent: {sars_sent}")
-                    if st.button("Reset SARS"): update_email_status(b_choice, "SARS Sent Date", ""); st.cache_data.clear(); st.rerun()
+                sars_email = s_dict.get("SARS", "")
+                sars_sent_date = get_val("SARS Sent Date")
+                if sars_sent_date and sars_sent_date != "None":
+                    st.success(f"✅ Sent on: {sars_sent_date}")
+                    if st.button("Reset SARS", key="rst_sars"):
+                        update_email_status(b_choice, "SARS Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
                 else:
-                    if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
+                    tax_num = get_val("Tax Number")
+                    has_tax_num = tax_num and str(tax_num).lower() not in ['none', 'nan', '']
+                    if has_tax_num:
+                        st.success(f"📌 Tax Number: {tax_num}")
+                    else:
+                        st.warning("⚠️ No Tax Number.")
+                    
+                    if st.button("Mark SARS Sent", key="btn_sars"):
+                        update_email_status(b_choice, "SARS Sent Date")
+                        st.cache_data.clear()
+                        st.rerun()
                 
                 st.divider()
-                # (Repeat for other depts as per previous code...)
-                st.info("Manage department emails here.")
+                
+                # COUNCIL (Handover)
+                st.markdown("#### Council")
+                muni_email = s_dict.get("Municipal", "")
+                c_sent_date = get_val("Council Email Sent Date")
+                
+                council_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council"
+                c_body_str = f"Dear Council Team,\n\nCouncil accounts are at: {council_path}\n\nPlease load onto Pretor Portal.\n\nRegards,\nPretor"
+                
+                if c_sent_date and c_sent_date != "None":
+                    st.success(f"✅ Sent on: {c_sent_date}")
+                    if st.button("Reset Council", key="rst_coun"):
+                        update_email_status(b_choice, "Council Email Sent Date", "")
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    col_c1, col_c2 = st.columns([1,1])
+                    with col_c1:
+                        lnk = f'<a href="mailto:{muni_email}?subject=Handover: {b_choice}&body={urllib.parse.quote(c_body_str)}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                        st.markdown(lnk, unsafe_allow_html=True)
+                    with col_c2:
+                        if st.button("Mark Council Sent", key="btn_coun"):
+                            update_email_status(b_choice, "Council Email Sent Date")
+                            st.cache_data.clear()
+                            st.rerun()
 
+                st.divider()
+
+                # Generic Handler
+                def render_simple_handover(dept_name, db_col, email_key):
+                    st.markdown(f"#### {dept_name}")
+                    sent = get_val(db_col)
+                    target = s_dict.get(email_key, "")
+                    if sent and sent != "None":
+                        st.success(f"✅ Sent on: {sent}")
+                        if st.button(f"Reset {dept_name}", key=f"rst_{dept_name}"):
+                            update_email_status(b_choice, db_col, "")
+                            st.cache_data.clear()
+                            st.rerun()
+                    else:
+                        st.info(f"Pending | Target: {target}")
+                        col1, col2 = st.columns([1,1])
+                        with col1:
+                            subject = urllib.parse.quote(f"Handover: {b_choice} - {dept_name}")
+                            body = urllib.parse.quote(f"Dear {dept_name} Team,\n\nPlease find attached handover docs.\n\nRegards.")
+                            lnk = f'<a href="mailto:{target}?subject={subject}&body={body}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:8px 12px; border-radius:5px;">📧 Draft Email</a>'
+                            st.markdown(lnk, unsafe_allow_html=True)
+                        with col2:
+                            if st.button(f"Mark {dept_name} Sent", key=f"btn_{dept_name}"):
+                                update_email_status(b_choice, db_col)
+                                st.cache_data.clear()
+                                st.rerun()
+                    st.divider()
+
+                render_simple_handover("Internal Insurance", "Internal Ins Email Sent Date", "Insurance")
+                render_simple_handover("Wages", "Wages Sent Date", "Wages")
+                render_simple_handover("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
+
+                # Fee Confirmation
+                st.markdown("#### Fee Confirmation")
+                f_date = get_val("Fee Confirmation Email Sent Date")
+                if f_date and f_date != "None":
+                    st.success(f"✅ Sent: {f_date}")
+                else:
+                    if st.button("Mark Fee Email Sent"): 
+                        update_email_status(b_choice, "Fee Confirmation Email Sent Date")
+                        st.cache_data.clear()
+                        st.rerun()
 
             # --- SUB SECTION 7: CLIENT UPDATES ---
             elif sub_nav == "Client Updates":
-                # (Same as before)
-                st.subheader("Client Status Update")
-                # ...
+                st.subheader(f"Client Status Update: {b_choice}")
+                st.markdown("Generate a progress report email for the client.")
+                
+                # 1. Internal Progress
+                internal_status = "--- INTERNAL HANDOVERS ---\n"
+                handovers = {
+                    "Wages": get_val("Wages Sent Date"),
+                    "Council": get_val("Council Email Sent Date"),
+                    "Legal/Debt": get_val("Debt Collection Sent Date"),
+                    "Insurance (Internal)": get_val("Internal Ins Email Sent Date"),
+                    "SARS": get_val("SARS Sent Date")
+                }
+                
+                for dept, date in handovers.items():
+                    status = f"✅ Done ({date})" if (date and date != "None") else "⚠️ Pending"
+                    internal_status += f"- {dept}: {status}\n"
 
-            # --- SUB SECTION 8: FINALIZE ---
-            st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Finalize Project"):
-                    finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
+                # 2. Checklist Status
+                checklist = get_data("Checklist")
+                received_list = "--- DOCUMENTS RECEIVED ---\n"
+                pending_list = "--- OUTSTANDING ITEMS ---\n"
+                
+                c_items = pd.DataFrame()
+                if not checklist.empty:
+                    c_items = checklist[checklist['Complex Name'] == b_choice]
+                    if not c_items.empty:
+                        # Received
+                        rec_items = c_items[c_items['Received'].astype(str).str.lower() == 'true']
+                        if not rec_items.empty:
+                            for _, r in rec_items.iterrows(): received_list += f"✔ {r['Task Name']}\n"
+                        else: received_list += "(None yet)\n"
+                        
+                        # Outstanding
+                        out_items = c_items[(c_items['Received'].astype(str).str.lower() != 'true') & (c_items['Delete'] != True)]
+                        if not out_items.empty:
+                            for _, r in out_items.iterrows(): pending_list += f"⭕ {r['Task Name']}\n"
+                        else: pending_list += "(None - All Clear!)\n"
+                    else:
+                        received_list += "(No items)\n"
+                        pending_list += "(No items)\n"
+
+                # 3. PDF GENERATION
+                emp_df = get_data("Employees")
+                arrears_df = get_data("Arrears")
+                council_df = get_data("Council")
+
+                st.markdown("#### 1. Download Report PDF")
+                st.caption("Attach this PDF to the email below.")
+                if st.button("📄 Generate Handover Report PDF"):
+                    pdf_file = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arrears_df, council_df)
+                    with open(pdf_file, "rb") as f:
+                        st.download_button("⬇️ Click to Download PDF", f, file_name=pdf_file, mime="application/pdf")
+                    st.success("PDF Generated successfully!")
+
+                st.divider()
+
+                # 4. EMAIL GENERATION
+                st.markdown("#### 2. Send Update Email")
+                client_email = get_val("Client Email")
+                client_body = f"Dear Client,\n\nPlease find below a status update regarding the onboarding of {b_choice}.\n\n"
+                client_body += "**Please see the attached PDF for a detailed breakdown of all items.**\n\n"
+                client_body += internal_status + "\n"
+                client_body += pending_list + "\n"
+                client_body += "We are actively following up on the outstanding items.\n\nRegards,\nPretor Take-On Team"
+                
+                st.text_area("Preview Email Content", value=client_body, height=300)
+                
+                if client_email and client_email != "None":
+                    sub = urllib.parse.quote(f"Status Update: {b_choice}")
+                    bod = urllib.parse.quote(client_body)
+                    lnk = f'<a href="mailto:{client_email}?subject={sub}&body={bod}" target="_blank" style="text-decoration:none; color:white; background-color:#FF4B4B; padding:10px 20px; border-radius:5px; font-weight:bold;">🚀 Send Update to Client</a>'
+                    st.markdown(lnk, unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Client Email is missing. Please add it in the 'Overview' tab.")
 
 if __name__ == "__main__":
     main()
