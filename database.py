@@ -40,6 +40,28 @@ def log_access(user_email):
     except Exception as e:
         print(f"Logging failed: {e}")
 
+# --- STORAGE & DOCUMENTS ---
+def upload_file_to_supabase(file_obj, file_path):
+    """Uploads a file to the 'takeon_docs' bucket and returns the public URL."""
+    try:
+        bucket_name = "takeon_docs"
+        # Upload file (upsert=True overwrites if exists)
+        supabase.storage.from_(bucket_name).upload(file_path, file_obj, {"content-type": file_obj.type, "upsert": "true"})
+        # Get Public URL
+        public_url = supabase.storage.from_(bucket_name).get_public_url(file_path)
+        return public_url
+    except Exception as e:
+        st.error(f"Upload failed: {e}")
+        return None
+
+def update_document_url(table_name, row_id, url):
+    """Generic function to update the 'Document URL' column for any table."""
+    try:
+        supabase.table(table_name).update({"Document URL": url}).eq("id", row_id).execute()
+        return "SUCCESS"
+    except Exception as e:
+        return str(e)
+
 # --- GENERIC FETCH ---
 def get_data(table_name):
     try:
@@ -159,13 +181,6 @@ def save_global_settings(settings_dict):
         for dept, email in settings_dict.items():
             supabase.table("Settings").insert({"Department": dept, "Email": email}).execute()
     except Exception as e: print(e)
-
-# --- STORAGE (Future Use) ---
-def upload_file_to_supabase(file_obj, file_path):
-    pass # Placeholder for future feature to prevent import errors
-
-def update_checklist_document(item_id, doc_url):
-    pass
 
 # --- PLACEHOLDERS ---
 def add_service_provider(n, t, c): pass 
