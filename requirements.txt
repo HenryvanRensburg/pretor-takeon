@@ -3,3 +3,4 @@ pandas
 fpdf
 supabase
 python-dateutil
+streamlit-option-menu
