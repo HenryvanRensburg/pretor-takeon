@@ -17,7 +17,7 @@ except (FileNotFoundError, KeyError):
     key = os.environ.get("SUPABASE_KEY")
 
 if not url or not key:
-    st.error("🚨 Supabase Credentials Missing!")
+    st.error("🚨 Supabase Credentials Missing! Check secrets.toml")
     st.stop()
 
 try:
@@ -28,6 +28,7 @@ except Exception as e:
 
 # --- AUTHENTICATION ---
 def login_user(email, password):
+    """Attempts login. Returns (user_object, error_message)."""
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
         return response.user, None
@@ -42,27 +43,24 @@ def log_access(user_email):
 
 # --- STORAGE & DOCUMENTS ---
 def upload_file_to_supabase(file_obj, file_path):
-    """Uploads a file to the 'takeon_docs' bucket and returns the public URL."""
+    """Uploads a file and returns the public URL."""
     try:
         bucket_name = "takeon_docs"
-        # Upload file (upsert=True overwrites if exists)
         supabase.storage.from_(bucket_name).upload(file_path, file_obj, {"content-type": file_obj.type, "upsert": "true"})
-        # Get Public URL
-        public_url = supabase.storage.from_(bucket_name).get_public_url(file_path)
-        return public_url
+        return supabase.storage.from_(bucket_name).get_public_url(file_path)
     except Exception as e:
         st.error(f"Upload failed: {e}")
         return None
 
 def update_document_url(table_name, row_id, url):
-    """Generic function to update the 'Document URL' column for any table."""
+    """Generic function to link a file URL to a specific record."""
     try:
         supabase.table(table_name).update({"Document URL": url}).eq("id", row_id).execute()
         return "SUCCESS"
     except Exception as e:
         return str(e)
 
-# --- GENERIC FETCH ---
+# --- DATA FETCHING ---
 def get_data(table_name):
     try:
         response = supabase.table(table_name).select("*").execute()
@@ -108,9 +106,6 @@ def save_broker_details(complex_name, broker_name, broker_email):
 def update_email_status(complex_name, column_name, value=None):
     date_val = value if value is not None else str(datetime.now().date())
     return update_building_details_batch(complex_name, {column_name: date_val})
-
-def finalize_project_db(complex_name):
-    return update_building_details_batch(complex_name, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
 
 # --- EMPLOYEES ---
 def add_employee(complex_name, name, surname, id_num, position, salary, payslip_bool, contract_bool, tax_ref_bool):
@@ -182,9 +177,10 @@ def save_global_settings(settings_dict):
             supabase.table("Settings").insert({"Department": dept, "Email": email}).execute()
     except Exception as e: print(e)
 
-# --- PLACEHOLDERS ---
+# --- DEPRECATED / PLACEHOLDERS ---
 def add_service_provider(n, t, c): pass 
 def add_trustee(c, n, e, p): pass 
 def delete_record_by_match(t, c, v): pass
 def update_service_provider_date(c, d): pass
 def update_wages_status(c, s): pass
+def finalize_project_db(c): pass # Removed as requested
