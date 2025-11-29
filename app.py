@@ -13,11 +13,33 @@ import urllib.parse
 from datetime import datetime
 import os
 import tempfile
+import re
 from fpdf import FPDF
 from streamlit_option_menu import option_menu
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pretor Take-On", layout="wide")
+
+# --- VALIDATION HELPERS ---
+def validate_email(email):
+    """Returns True if email is valid format."""
+    if not email: return True 
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def validate_phone(phone):
+    """Returns True if phone is a valid 10-digit SA number (e.g. 0821234567)."""
+    if not phone: return True
+    # Remove spaces, dashes, brackets
+    clean_phone = re.sub(r'[\s\-\(\)]', '', str(phone))
+    # Check if exactly 10 digits and starts with 0
+    return re.match(r'^0\d{9}$', clean_phone) is not None
+
+def validate_sa_id(id_num):
+    """Returns True if ID is a valid 13-digit numeric string."""
+    if not id_num: return True
+    clean_id = str(id_num).strip()
+    return re.match(r'^\d{13}$', clean_id) is not None
 
 # --- PDF GENERATOR CLASS ---
 class HandoverReport(FPDF):
@@ -299,8 +321,20 @@ def main_app():
             ins = st.text_input("Insurance", value=s_dict.get("Insurance", ""))
             acc = st.text_input("Accounts", value=s_dict.get("Accounts", ""))
             if st.form_submit_button("Save"):
-                save_global_settings({"Wages": wages, "SARS": sars, "Municipal": muni, "Debt Collection": debt, "Insurance": ins, "Accounts": acc})
-                st.cache_data.clear(); st.success("Saved!"); st.rerun()
+                # --- VALIDATION ---
+                errors = []
+                if wages and not validate_email(wages): errors.append("Invalid Wages Email")
+                if sars and not validate_email(sars): errors.append("Invalid SARS Email")
+                if muni and not validate_email(muni): errors.append("Invalid Municipal Email")
+                if debt and not validate_email(debt): errors.append("Invalid Debt Email")
+                if ins and not validate_email(ins): errors.append("Invalid Insurance Email")
+                if acc and not validate_email(acc): errors.append("Invalid Accounts Email")
+                
+                if errors:
+                    for e in errors: st.error(e)
+                else:
+                    save_global_settings({"Wages": wages, "SARS": sars, "Municipal": muni, "Debt Collection": debt, "Insurance": ins, "Accounts": acc})
+                    st.cache_data.clear(); st.success("Saved!"); st.rerun()
 
     # --- NEW BUILDING ---
     elif choice == "New Building":
@@ -380,19 +414,33 @@ def main_app():
                     with c9: u_bk = smart_input("Bookkeeper", "Bookkeeper", c9); u_bk_e = smart_input("Bookkeeper Email", "Bookkeeper Email", c9)
                     st.markdown("---")
                     if st.form_submit_button("💾 Save Missing Details"):
-                        updates = {"Building Code": u_code, "Type": u_type, "No of Units": u_units, "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos, "Physical Address": u_addr, "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp, "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod, "Auditor": u_aud, "Last Audit": u_last_aud, "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e, "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom, "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e}
-                        update_building_details_batch(b_choice, updates); st.cache_data.clear(); st.success("Updated."); st.rerun()
+                        # --- VALIDATION ---
+                        errors = []
+                        if u_pm_e and not validate_email(u_pm_e): errors.append("Invalid PM Email")
+                        if u_client_e and not validate_email(u_client_e): errors.append("Invalid Client Email")
+                        if u_pa_e and not validate_email(u_pa_e): errors.append("Invalid PA Email")
+                        if u_bk_e and not validate_email(u_bk_e): errors.append("Invalid Bookkeeper Email")
+
+                        if errors:
+                            for e in errors: st.error(e)
+                        else:
+                            updates = {"Building Code": u_code, "Type": u_type, "No of Units": u_units, "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos, "Physical Address": u_addr, "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp, "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod, "Auditor": u_aud, "Last Audit": u_last_aud, "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e, "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom, "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e}
+                            update_building_details_batch(b_choice, updates); st.cache_data.clear(); st.success("Updated."); st.rerun()
                 
                 st.markdown("### Previous Agent Request")
                 c1, c2 = st.columns(2)
                 an = c1.text_input("Agent Name", value=get_val("Agent Name"))
                 ae = c2.text_input("Agent Email", value=get_val("Agent Email"))
                 if st.button("Generate Request PDF"):
-                    update_project_agent_details(b_choice, an, ae); st.cache_data.clear()
-                    items = get_data("Checklist")
-                    req = items[(items['Complex Name'] == b_choice) & (items['Responsibility'] != 'Pretor Group')]
-                    pdf = generate_appointment_pdf(b_choice, req, an, get_val("Take On Date"), get_val("Year End"), get_val("Building Code"))
-                    with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
+                    # VALIDATE AGENT EMAIL
+                    if ae and not validate_email(ae):
+                        st.error("Invalid Agent Email Address")
+                    else:
+                        update_project_agent_details(b_choice, an, ae); st.cache_data.clear()
+                        items = get_data("Checklist")
+                        req = items[(items['Complex Name'] == b_choice) & (items['Responsibility'] != 'Pretor Group')]
+                        pdf = generate_appointment_pdf(b_choice, req, an, get_val("Take On Date"), get_val("Year End"), get_val("Building Code"))
+                        with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
 
             elif sub_nav == "Progress Tracker":
                 st.markdown("### Checklist")
@@ -515,7 +563,11 @@ def main_app():
                 st.divider(); st.markdown("#### ➕ Add New Employee")
                 with st.form("add_s", clear_on_submit=True):
                     c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
-                    if st.form_submit_button("Add"): add_employee(b_choice, n, s, "", "", 0.0, False, False, False); st.cache_data.clear(); st.success("Added"); st.rerun()
+                    e_id = st.text_input("ID Number", key="new_eid") # Use separate logic for ID field placement
+                    if st.form_submit_button("Add"):
+                         if validate_sa_id(e_id):
+                             add_employee(b_choice, n, s, e_id, "", 0.0, False, False, False); st.cache_data.clear(); st.success("Added"); st.rerun()
+                         else: st.error("Invalid ID Number")
 
             elif sub_nav == "Arrears Details":
                 st.subheader("Arrears Management")
@@ -530,8 +582,16 @@ def main_app():
                          if st.button("Save Arrears"): update_arrears_batch(ed_a); st.cache_data.clear(); st.success("Updated"); st.rerun()
                     else: st.info("No arrears.")
                 with st.form("add_a", clear_on_submit=True):
-                    u=st.text_input("Unit"); a=st.number_input("Amount")
-                    if st.form_submit_button("Add"): add_arrears_item(b_choice, u, a, "", "", ""); st.cache_data.clear(); st.success("Added"); st.rerun()
+                    u=st.text_input("Unit"); a=st.number_input("Amount"); m=st.text_input("Attorney Email"); p=st.text_input("Attorney Phone")
+                    if st.form_submit_button("Add"):
+                         # VALIDATE
+                         errs = []
+                         if m and not validate_email(m): errs.append("Invalid Email")
+                         if p and not validate_phone(p): errs.append("Invalid Phone (10 digits)")
+                         if errs: 
+                             for e in errs: st.error(e)
+                         else:
+                             add_arrears_item(b_choice, u, a, "", m, p); st.cache_data.clear(); st.success("Added"); st.rerun()
 
             elif sub_nav == "Council Details":
                 st.subheader("Council Management")
@@ -594,7 +654,9 @@ def main_app():
                 with st.expander("Edit Broker"):
                      with st.form("eb"): 
                         bn=st.text_input("Name", get_val("Insurance Broker Name")); be=st.text_input("Email", get_val("Insurance Broker Email"))
-                        if st.form_submit_button("Save"): save_broker_details(b_choice, bn, be); st.cache_data.clear(); st.rerun()
+                        if st.form_submit_button("Save"): 
+                            if be and not validate_email(be): st.error("Invalid Email")
+                            else: save_broker_details(b_choice, bn, be); st.cache_data.clear(); st.rerun()
 
                 st.markdown("**External Broker**")
                 b_sent = get_val("Broker Email Sent Date")
