@@ -734,10 +734,6 @@ def main_app():
             elif sub_nav == "Department Handovers":
                 st.markdown("### Department Handovers")
                 settings = get_data("Settings"); s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
-                
-                # Pre-load council data for email logic
-                council_df = get_data("Council")
-                if council_df.empty: council_df = get_data("council")
 
                 st.markdown("#### SARS")
                 sars_sent = get_val("SARS Sent Date")
@@ -750,7 +746,9 @@ def main_app():
                 st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
                 
-                # Check for docs
+                # Check for docs in Council table
+                council_df = get_data("Council")
+                if council_df.empty: council_df = get_data("council")
                 c_docs = " (Files Attached)" if not council_df.empty else ""
                 c_body = f"Dear Council Team,\n\nPlease find attached account details{c_docs}.\n\nPath: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council\n\nPlease load onto Pretor Portal.\n\nRegards."
                 
@@ -824,6 +822,11 @@ def main_app():
                     lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                     st.markdown(lnk, unsafe_allow_html=True)
                 else: st.warning("Add client email in Overview.")
+
+            st.divider()
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
