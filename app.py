@@ -399,8 +399,15 @@ def main_app():
                 done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
                 prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
                 
-                c_arrears = arrears[arrears['Complex Name'] == b_choice] if not arrears.empty and 'Complex Name' in arrears.columns else pd.DataFrame()
-                debt_val = c_arrears['Outstanding Amount'].sum() if not c_arrears.empty else 0
+                # FIX: Force numeric conversion for arrears summary
+                c_arrears = pd.DataFrame()
+                debt_val = 0.0
+                if not arrears.empty and 'Complex Name' in arrears.columns:
+                    c_arrears = arrears[arrears['Complex Name'] == b_choice]
+                    if not c_arrears.empty and 'Outstanding Amount' in c_arrears.columns:
+                        # Convert to numeric, coerce errors to NaN, then fill with 0
+                        numeric_amounts = pd.to_numeric(c_arrears['Outstanding Amount'], errors='coerce').fillna(0)
+                        debt_val = numeric_amounts.sum()
                 
                 c_staff = staff[staff['Complex Name'] == b_choice] if not staff.empty and 'Complex Name' in staff.columns else pd.DataFrame()
                 staff_count = len(c_staff)
