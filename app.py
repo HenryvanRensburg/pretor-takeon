@@ -7,7 +7,7 @@ from database import (
     save_checklist_batch, finalize_project_db, save_broker_details, update_email_status, 
     update_service_provider_date, update_wages_status, update_employee_batch, 
     update_council_batch, update_arrears_batch, login_user, log_access,
-    upload_file_to_supabase, update_checklist_document  # Ensure these are imported
+    upload_file_to_supabase, update_checklist_document
 )
 from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
@@ -100,14 +100,11 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             for _, row in agent_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
                 d_rec = pdf.clean_text(str(row.get('Date Received', '')))
-                
-                # Show link in PDF if exists
-                doc_url = row.get('Document URL')
-                doc_txt = " (See attached doc)" if doc_url else ""
-                
                 notes = f" (Note: {pdf.clean_text(str(row['Notes']))})" if row['Notes'] else ""
+                # Check doc
+                doc_note = " (Doc Attached)" if row.get('Document URL') else ""
                 pdf.cell(10)
-                pdf.multi_cell(0, 5, f"- {t_name}{notes}{doc_txt} [Received: {d_rec}]")
+                pdf.multi_cell(0, 5, f"- {t_name}{notes}{doc_note} [Received: {d_rec}]")
         else:
             pdf.set_font("Arial", "I", 9)
             pdf.cell(0, 6, "No items marked as received from agent yet.", 0, 1)
@@ -126,8 +123,10 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             pdf.set_font("Arial", "", 9)
             for _, row in pretor_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
+                completed_by = pdf.clean_text(str(row.get('Completed By', '')))
+                done_str = f" (Done by: {completed_by})" if completed_by else " (Completed)"
                 pdf.cell(10)
-                pdf.multi_cell(0, 5, f"- {t_name} (Completed)")
+                pdf.multi_cell(0, 5, f"- {t_name}{done_str}")
         else:
             pdf.set_font("Arial", "I", 9)
             pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
@@ -269,31 +268,100 @@ def main_app():
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
     choice = st.sidebar.selectbox("Menu", menu)
 
-    # --- DASHBOARD ---
+    # --- DASHBOARD (NEW MY TASKS VIEW) ---
     if choice == "Dashboard":
         st.subheader("Active Projects Overview")
-        df = get_data("Projects")
-        checklist = get_data("Checklist")
-        if not df.empty:
-            summary_list = []
-            for index, row in df.iterrows():
-                c_name = row['Complex Name']
-                if checklist.empty: total, received = 0, 0
-                else:
-                    c_items = checklist[checklist['Complex Name'] == c_name]
-                    valid = c_items[c_items['Delete'] != True] 
-                    pretor = valid[valid['Responsibility'].isin(['Pretor Group', 'Both'])]
-                    total = len(pretor)
-                    received = len(pretor[pretor['Received'].apply(lambda x: str(x).lower() == 'true')])
-                progress_val = (received / total) if total > 0 else 0
-                status = "✅ Completed" if progress_val == 1.0 else "⚠️ Near Completion" if progress_val > 0.8 else "🔄 In Progress" if progress_val > 0.1 else "🆕 Just Started"
-                summary_list.append({"Complex Name": c_name, "Manager": row.get('Assigned Manager', ''), "Take On Date": row.get('Take On Date', ''), "Progress": progress_val, "Status": status, "Items Pending": total - received})
-            summ_df = pd.DataFrame(summary_list)
-            st.dataframe(summ_df, column_config={"Progress": st.column_config.ProgressColumn(format="%.0f%%", min_value=0, max_value=1)}, hide_index=True)
-            if st.button("Download Weekly Report PDF"):
-                pdf = generate_weekly_report_pdf(summary_list)
-                with open(pdf, "rb") as f: st.download_button("⬇️ Download PDF", f, file_name=pdf)
-        else: st.info("No projects found.")
+        
+        # Fetch all data needed
+        df_projects = get_data("Projects")
+        df_checklist = get_data("Checklist")
+        
+        if df_projects.empty:
+            st.info("No projects found.")
+        else:
+            # 1. METRICS
+            total_proj = len(df_projects)
+            
+            # Calculate total outstanding tasks
+            total_outstanding = 0
+            if not df_checklist.empty:
+                pending_mask = (df_checklist['Received'].astype(str).str.lower() != 'true') & (df_checklist['Delete'] != True)
+                total_outstanding = len(df_checklist[pending_mask])
+
+            col1, col2 = st.columns(2)
+            col1.metric("Total Active Projects", total_proj)
+            col2.metric("Total Outstanding Tasks", total_outstanding)
+            
+            st.divider()
+            
+            # 2. MY TASKS vs ALL TASKS
+            st.markdown("### 📋 Task Status")
+            
+            view_mode = st.radio("Filter View:", ["All Projects", "My Projects Only"], horizontal=True)
+            
+            # Filter projects
+            if view_mode == "My Projects Only":
+                user_email = st.session_state.get('user_email', '').lower()
+                # Ensure case-insensitive match and handle NaNs
+                df_projects['Manager Email'] = df_projects['Manager Email'].astype(str).str.lower()
+                filtered_projects = df_projects[df_projects['Manager Email'] == user_email]
+            else:
+                filtered_projects = df_projects
+            
+            if filtered_projects.empty:
+                st.info("No projects found for this filter.")
+            else:
+                # Sort by name
+                filtered_projects = filtered_projects.sort_values(by="Complex Name")
+                
+                for _, row in filtered_projects.iterrows():
+                    c_name = row['Complex Name']
+                    manager = row.get('Assigned Manager', 'Unassigned')
+                    
+                    # Get tasks for this building
+                    c_tasks = df_checklist[df_checklist['Complex Name'] == c_name] if not df_checklist.empty else pd.DataFrame()
+                    
+                    if not c_tasks.empty:
+                        # Filter Pending
+                        pending_items = c_tasks[(c_tasks['Received'].astype(str).str.lower() != 'true') & (c_tasks['Delete'] != True)]
+                        count_pending = len(pending_items)
+                    else:
+                        count_pending = 0
+                        pending_items = pd.DataFrame()
+
+                    # Card Logic: Red if tasks > 0, Green if 0
+                    color = "red" if count_pending > 0 else "green"
+                    icon = "🔥" if count_pending > 0 else "✅"
+                    
+                    with st.expander(f"{icon} {c_name} | Manager: {manager} | Outstanding: {count_pending}"):
+                        if count_pending > 0:
+                            # Split Internal vs Agent for quick view
+                            agent_p = pending_items[pending_items['Responsibility'].isin(['Previous Agent', 'Both'])]
+                            internal_p = pending_items[pending_items['Responsibility'].isin(['Pretor Group', 'Both'])]
+                            
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                st.markdown("**External / Agent Actions**")
+                                if not agent_p.empty:
+                                    for _, task in agent_p.iterrows():
+                                        st.write(f"- {task['Task Name']}")
+                                else:
+                                    st.caption("Waiting on nothing external.")
+                                    
+                            with c2:
+                                st.markdown("**Internal / Pretor Actions**")
+                                if not internal_p.empty:
+                                    for _, task in internal_p.iterrows():
+                                        st.write(f"- {task['Task Name']}")
+                                else:
+                                    st.caption("No internal actions pending.")
+                            
+                            if st.button(f"Go to {c_name}", key=f"go_{c_name}"):
+                                # Set selection logic if we could redirect, 
+                                # currently manual nav required in Streamlit.
+                                st.info(f"Please select '{c_name}' in the 'Manage Buildings' tab to action these.")
+                        else:
+                            st.success("All checklist items completed for this project.")
 
     # --- MASTER SCHEDULE ---
     elif choice == "Master Schedule":
@@ -403,12 +471,10 @@ def main_app():
                 done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
                 prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
                 
-                # FIX: Force numeric conversion for arrears summary
-                c_arrears = pd.DataFrame()
+                c_arrears = arrears[arrears['Complex Name'] == b_choice] if not arrears.empty and 'Complex Name' in arrears.columns else pd.DataFrame()
                 debt_val = 0.0
-                if not arrears.empty and 'Complex Name' in arrears.columns:
-                    c_arrears = arrears[arrears['Complex Name'] == b_choice]
-                    if not c_arrears.empty and 'Outstanding Amount' in c_arrears.columns:
+                if not c_arrears.empty:
+                    if 'Outstanding Amount' in c_arrears.columns:
                         numeric_amounts = pd.to_numeric(c_arrears['Outstanding Amount'], errors='coerce').fillna(0)
                         debt_val = numeric_amounts.sum()
                 
@@ -504,7 +570,7 @@ def main_app():
                                 ag_pend['Sort'] = ag_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                                 ag_pend = ag_pend.sort_values(by=['Sort', 'Task Name'])
                                 
-                                # --- DOCUMENT UPLOAD COLUMN (OPTIONAL) ---
+                                # --- DOC UPLOAD ---
                                 st.markdown("##### Select Item to Upload Document (Optional)")
                                 item_names = ag_pend['Task Name'].tolist()
                                 selected_item = st.selectbox("Choose Checklist Item", ["None"] + item_names)
@@ -513,24 +579,13 @@ def main_app():
                                     uploaded_file = st.file_uploader(f"Upload Document for: {selected_item}")
                                     if uploaded_file:
                                         if st.button("Upload & Mark as Received"):
-                                            # 1. Find Item ID
                                             item_id = ag_pend[ag_pend['Task Name'] == selected_item].iloc[0]['id']
-                                            
-                                            # 2. Upload to Supabase
                                             file_path = f"{b_choice}/{selected_item}_{uploaded_file.name}"
                                             doc_url = upload_file_to_supabase(uploaded_file, file_path)
-                                            
                                             if doc_url:
-                                                # 3. Update DB with URL + Mark Received
                                                 update_checklist_document(item_id, doc_url)
-                                                # We also need to mark it received in the main logic, but for now user can tick it.
-                                                # Better: Auto-tick the dataframe row? Hard in editor.
-                                                # Best: Use a direct DB update for 'Received' too
-                                                # ... (Simplification: User ticks box after upload or we force update)
                                                 st.success(f"Uploaded! Please tick '{selected_item}' below and Save.")
-                                
-                                st.divider()
-                                
+
                                 edited_ag = st.data_editor(ag_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key="ag_ed", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
                                 if st.button("Save Agent Items"):
                                     edited_ag['Date Received'] = edited_ag.apply(fill_date, axis=1)
