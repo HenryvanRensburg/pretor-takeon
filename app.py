@@ -22,21 +22,16 @@ st.set_page_config(page_title="Pretor Take-On", layout="wide")
 
 # --- VALIDATION HELPERS ---
 def validate_email(email):
-    """Returns True if email is valid format."""
     if not email: return True 
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
 def validate_phone(phone):
-    """Returns True if phone is a valid 10-digit SA number (e.g. 0821234567)."""
     if not phone: return True
-    # Remove spaces, dashes, brackets
     clean_phone = re.sub(r'[\s\-\(\)]', '', str(phone))
-    # Check if exactly 10 digits and starts with 0
     return re.match(r'^0\d{9}$', clean_phone) is not None
 
 def validate_sa_id(id_num):
-    """Returns True if ID is a valid 13-digit numeric string."""
     if not id_num: return True
     clean_id = str(id_num).strip()
     return re.match(r'^\d{13}$', clean_id) is not None
@@ -125,8 +120,10 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             pdf.set_font("Arial", "", 9)
             for _, row in pretor_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
+                completed_by = pdf.clean_text(str(row.get('Completed By', '')))
+                done_str = f" (Done by: {completed_by})" if completed_by else " (Completed)"
                 pdf.cell(10)
-                pdf.multi_cell(0, 5, f"- {t_name} (Completed)")
+                pdf.multi_cell(0, 5, f"- {t_name}{done_str}")
         else:
             pdf.set_font("Arial", "I", 9)
             pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
@@ -390,6 +387,43 @@ def main_app():
 
             if sub_nav == "Overview":
                 st.subheader(f"Project Overview: {b_choice}")
+                
+                # --- MINI DASHBOARD ---
+                # Fetch data first for calcs
+                checklist_d = get_data("Checklist")
+                arrears_d = get_data("Arrears")
+                staff_d = get_data("Employees")
+                council_d = get_data("Council")
+                
+                c_checklist = checklist[checklist['Complex Name'] == b_choice] if not checklist.empty else pd.DataFrame()
+                total_tasks = len(c_checklist)
+                done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
+                prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
+                
+                c_arrears = arrears_d[arrears_d['Complex Name'] == b_choice] if not arrears_d.empty and 'Complex Name' in arrears_d.columns else pd.DataFrame()
+                debt_val = c_arrears['Outstanding Amount'].sum() if not c_arrears.empty else 0
+                
+                c_staff = staff_d[staff_d['Complex Name'] == b_choice] if not staff_d.empty and 'Complex Name' in staff_d.columns else pd.DataFrame()
+                staff_count = len(c_staff)
+                
+                c_coun = council_d[council_d['Complex Name'] == b_choice] if not council_d.empty and 'Complex Name' in council_d.columns else pd.DataFrame()
+                coun_count = len(c_coun)
+
+                # Render Dashboard
+                col_d1, col_d2, col_d3, col_d4 = st.columns(4)
+                col_d1.metric("Checklist Progress", f"{int(prog_val*100)}%")
+                col_d1.progress(prog_val)
+                col_d2.metric("Total Arrears", f"R {debt_val:,.2f}")
+                col_d3.metric("Staff Loaded", staff_count)
+                col_d4.metric("Council Accounts", coun_count)
+                
+                # Warnings
+                tax_check = get_val("Tax Number")
+                if not tax_check or tax_check == 'None':
+                    st.warning("⚠️ Alert: Tax Number is missing!")
+
+                st.divider()
+
                 with st.form("project_overview_form"):
                     st.caption("Fields with existing data are locked 🔒.")
                     def smart_input(label, col_name, col_obj=st):
