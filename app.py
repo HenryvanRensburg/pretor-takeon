@@ -100,14 +100,16 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             for _, row in agent_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
                 d_rec = pdf.clean_text(str(row.get('Date Received', '')))
+                notes = f" (Note: {pdf.clean_text(str(row['Notes']))})" if row['Notes'] else ""
                 doc_url = row.get('Document URL')
                 doc_txt = " [Doc Attached]" if doc_url else ""
-                notes = f" (Note: {pdf.clean_text(str(row['Notes']))})" if row['Notes'] else ""
                 pdf.cell(10)
                 pdf.multi_cell(0, 5, f"- {t_name}{notes}{doc_txt} [Received: {d_rec}]")
         else:
-            pdf.set_font("Arial", "I", 9); pdf.cell(0, 6, "No items marked as received from agent yet.", 0, 1)
-    else: pdf.cell(0, 6, "No checklist data.", 0, 1)
+            pdf.set_font("Arial", "I", 9)
+            pdf.cell(0, 6, "No items marked as received from agent yet.", 0, 1)
+    else:
+        pdf.cell(0, 6, "No checklist data.", 0, 1)
     pdf.ln(5)
 
     # 3. INTERNAL
@@ -121,11 +123,15 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             pdf.set_font("Arial", "", 9)
             for _, row in pretor_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
+                completed_by = pdf.clean_text(str(row.get('Completed By', '')))
+                done_str = f" (Done by: {completed_by})" if completed_by else " (Completed)"
                 pdf.cell(10)
-                pdf.multi_cell(0, 5, f"- {t_name} (Completed)")
+                pdf.multi_cell(0, 5, f"- {t_name}{done_str}")
         else:
-            pdf.set_font("Arial", "I", 9); pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
-    else: pdf.cell(0, 6, "No checklist data.", 0, 1)
+            pdf.set_font("Arial", "I", 9)
+            pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
+    else:
+        pdf.cell(0, 6, "No checklist data.", 0, 1)
     pdf.ln(5)
 
     # 4. STAFF
@@ -151,8 +157,10 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 pdf.cell(30, 6, sal, 1)
                 pdf.cell(30, 6, has_docs, 1)
                 pdf.ln()
-        else: pdf.cell(0, 6, "No staff loaded.", 0, 1)
-    else: pdf.cell(0, 6, "No staff data.", 0, 1)
+        else:
+            pdf.cell(0, 6, "No staff loaded.", 0, 1)
+    else:
+        pdf.cell(0, 6, "No staff data.", 0, 1)
     pdf.ln(5)
 
     # 5. ARREARS
@@ -175,8 +183,10 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 pdf.cell(40, 6, amt, 1)
                 pdf.cell(90, 6, att, 1)
                 pdf.ln()
-        else: pdf.cell(0, 6, "No arrears loaded.", 0, 1)
-    else: pdf.cell(0, 6, "No arrears data.", 0, 1)
+        else:
+            pdf.cell(0, 6, "No arrears loaded.", 0, 1)
+    else:
+        pdf.cell(0, 6, "No arrears data.", 0, 1)
     pdf.ln(5)
 
     # 6. COUNCIL
@@ -199,8 +209,10 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
                 pdf.cell(50, 6, svc, 1)
                 pdf.cell(40, 6, bal, 1)
                 pdf.ln()
-        else: pdf.cell(0, 6, "No council accounts loaded.", 0, 1)
-    else: pdf.cell(0, 6, "No council data.", 0, 1)
+        else:
+            pdf.cell(0, 6, "No council accounts loaded.", 0, 1)
+    else:
+        pdf.cell(0, 6, "No council data.", 0, 1)
     pdf.ln(5)
 
     # 7. DATES
@@ -393,6 +405,7 @@ def main_app():
                 done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
                 prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
                 
+                # FIX: Force numeric conversion for arrears summary
                 c_arrears = pd.DataFrame()
                 debt_val = 0.0
                 if not arrears.empty and 'Complex Name' in arrears.columns:
@@ -493,12 +506,12 @@ def main_app():
                                 ag_pend['Sort'] = ag_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                                 ag_pend = ag_pend.sort_values(by=['Sort', 'Task Name'])
                                 
-                                # --- UPLOADER ---
+                                # --- DOC UPLOAD ---
                                 st.markdown("##### 📎 Attach Document (Optional)")
                                 item_names = ag_pend['Task Name'].tolist()
                                 selected_item = st.selectbox("Select checklist item to attach file", ["None"] + item_names)
                                 if selected_item != "None":
-                                    uploaded_file = st.file_uploader(f"Upload for: {selected_item}", key="ul_chk")
+                                    uploaded_file = st.file_uploader(f"Upload Document for: {selected_item}", key="ul_chk")
                                     if uploaded_file:
                                         if st.button("Upload File"):
                                             row_id = ag_pend[ag_pend['Task Name'] == selected_item].iloc[0]['id']
@@ -506,7 +519,7 @@ def main_app():
                                             url = upload_file_to_supabase(uploaded_file, path)
                                             if url:
                                                 update_document_url("Checklist", row_id, url)
-                                                st.success("File Attached! You can now mark it as received below.")
+                                                st.success(f"Uploaded! Please tick '{selected_item}' below and Save.")
 
                                 edited_ag = st.data_editor(ag_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key="ag_ed", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
                                 if st.button("Save Agent Items"):
@@ -604,25 +617,10 @@ def main_app():
                         ed_s = st.data_editor(curr_s[[c for c in cols if c in curr_s.columns]], hide_index=True, key="stf_ed", column_config={"id": None, "Salary": st.column_config.NumberColumn(format="R %.2f")})
                         if st.button("Save Staff"): update_employee_batch(ed_s); st.cache_data.clear(); st.success("Updated!"); st.rerun()
                     else: st.info("No staff.")
-                    
-                    # --- STAFF UPLOADER ---
-                    st.markdown("##### 📎 Upload Contract/ID")
-                    s_list = curr_s['Name'].tolist() if not curr_s.empty else []
-                    sel_s = st.selectbox("Select Employee", ["None"] + s_list)
-                    if sel_s != "None":
-                        up_s = st.file_uploader("Upload Document", key="up_stf")
-                        if up_s and st.button("Upload to Staff"):
-                            row_id = curr_s[curr_s['Name'] == sel_s].iloc[0]['id']
-                            path = f"{b_choice}/Staff/{sel_s}_{up_s.name}"
-                            url = upload_file_to_supabase(up_s, path)
-                            if url:
-                                update_document_url("Employees", row_id, url)
-                                st.success("Uploaded!")
-                
                 st.divider(); st.markdown("#### ➕ Add New Employee")
                 with st.form("add_s", clear_on_submit=True):
                     c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
-                    e_id = st.text_input("ID Number", key="new_eid")
+                    e_id = st.text_input("ID Number", key="new_eid") # Use separate logic for ID field placement
                     if st.form_submit_button("Add"):
                          if validate_sa_id(e_id):
                              add_employee(b_choice, n, s, e_id, "", 0.0, False, False, False); st.cache_data.clear(); st.success("Added"); st.rerun()
@@ -639,26 +637,14 @@ def main_app():
                     if not curr_a.empty:
                          ed_a = st.data_editor(curr_a[['id', 'Unit Number', 'Outstanding Amount']], hide_index=True, key="arr_ed", column_config={"id": None, "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f")})
                          if st.button("Save Arrears"): update_arrears_batch(ed_a); st.cache_data.clear(); st.success("Updated"); st.rerun()
-                         
-                         # --- ARREARS UPLOAD ---
-                         st.markdown("##### 📎 Upload Legal Handover")
-                         u_list = curr_a['Unit Number'].astype(str).tolist()
-                         sel_u = st.selectbox("Select Unit", ["None"] + u_list)
-                         if sel_u != "None":
-                             up_a = st.file_uploader("Upload File", key="up_arr")
-                             if up_a and st.button("Upload to Arrears"):
-                                 row_id = curr_a[curr_a['Unit Number'].astype(str) == sel_u].iloc[0]['id']
-                                 path = f"{b_choice}/Arrears/{sel_u}_{up_a.name}"
-                                 url = upload_file_to_supabase(up_a, path)
-                                 if url: update_document_url("Arrears", row_id, url); st.success("Uploaded!")
-
                     else: st.info("No arrears.")
                 with st.form("add_a", clear_on_submit=True):
                     u=st.text_input("Unit"); a=st.number_input("Amount"); m=st.text_input("Attorney Email"); p=st.text_input("Attorney Phone")
                     if st.form_submit_button("Add"):
+                         # VALIDATE
                          errs = []
                          if m and not validate_email(m): errs.append("Invalid Email")
-                         if p and not validate_phone(p): errs.append("Invalid Phone")
+                         if p and not validate_phone(p): errs.append("Invalid Phone (10 digits)")
                          if errs: 
                              for e in errs: st.error(e)
                          else:
@@ -677,18 +663,6 @@ def main_app():
                     if not curr_c.empty:
                         ed_c = st.data_editor(curr_c[['id', 'Account Number', 'Service']], hide_index=True, key="cou_ed", column_config={"id": None, "Balance": st.column_config.NumberColumn(format="R %.2f")})
                         if st.button("Save Council"): update_council_batch(ed_c); st.cache_data.clear(); st.success("Updated"); st.rerun()
-                        
-                        # --- COUNCIL UPLOAD ---
-                        st.markdown("##### 📎 Upload Account Statement")
-                        ac_list = curr_c['Account Number'].astype(str).tolist()
-                        sel_ac = st.selectbox("Select Account", ["None"] + ac_list)
-                        if sel_ac != "None":
-                            up_c = st.file_uploader("Upload File", key="up_cou")
-                            if up_c and st.button("Upload to Council"):
-                                row_id = curr_c[curr_c['Account Number'].astype(str) == sel_ac].iloc[0]['id']
-                                path = f"{b_choice}/Council/{sel_ac}_{up_c.name}"
-                                url = upload_file_to_supabase(up_c, path)
-                                if url: update_document_url("Council", row_id, url); st.success("Uploaded!")
                     else: st.info("No accounts.")
                 with st.form("add_c", clear_on_submit=True):
                     a=st.text_input("Acc"); s=st.text_input("Svc")
@@ -708,22 +682,11 @@ def main_app():
                 
                 st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
-                # NEW: Check for docs in Council table
-                c_docs = " (Files Attached)" if not council_df.empty else ""
-                c_body = f"Dear Council Team,\n\nPlease find attached account details{c_docs}.\n\nRegards."
-                
                 if c_sent and c_sent != "None":
                     st.success(f"✅ Sent: {c_sent}")
                     if st.button("Reset Council"): update_email_status(b_choice, "Council Email Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    c1, c2 = st.columns([1,1])
-                    with c1:
-                        muni_em = s_dict.get("Municipal", "")
-                        if muni_em:
-                            lnk = f'<a href="mailto:{muni_em}?subject=Handover: {b_choice}&body={urllib.parse.quote(c_body)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Draft Email</a>'
-                            st.markdown(lnk, unsafe_allow_html=True)
-                    with c2:
-                        if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
+                    if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
 
                 st.divider()
                 def render_handover(name, col, email_key, custom_body=None):
@@ -761,11 +724,9 @@ def main_app():
                     if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.cache_data.clear(); st.rerun()
 
                 st.markdown("**Internal Insurance**")
-                # Logic to find uploaded insurance docs if any (from checklist)
-                # Simplified for now
-                render_handover("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", f"Hi Insurance,\n\nPlease find handover docs attached.\n\nRegards.")
+                render_handover("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", f"Hi Insurance,\n\nDocs at: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance\n\nRegards.")
                 
-                render_handover("Wages", "Wages Sent Date", "Wages", f"Dear Wages,\n\nPlease find staff details and contracts attached.\n\nRegards.")
+                render_handover("Wages", "Wages Sent Date", "Wages", f"Dear Wages,\n\nDocs at: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\salaries&wages\n\nRegards.")
                 
                 render_handover("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
 
