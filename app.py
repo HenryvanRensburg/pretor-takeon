@@ -103,10 +103,8 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
             pdf.set_font("Arial", "", 9)
             for _, row in pretor_items.iterrows():
                 t_name = pdf.clean_text(row['Task Name'])
-                completed_by = pdf.clean_text(str(row.get('Completed By', '')))
-                done_str = f" (Done by: {completed_by})" if completed_by else " (Completed)"
                 pdf.cell(10)
-                pdf.multi_cell(0, 5, f"- {t_name}{done_str}")
+                pdf.multi_cell(0, 5, f"- {t_name} (Completed)")
         else:
             pdf.set_font("Arial", "I", 9)
             pdf.cell(0, 6, "No internal actions completed yet.", 0, 1)
@@ -436,6 +434,40 @@ def main_app():
                                  try: last_d = pd.to_datetime(ag_comp['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
                                  except: last_d = "Unknown"
                                  st.success(f"✅ All items received! Last: **{last_d}**")
+                                 
+                                 st.divider()
+                                 st.markdown("#### 🚀 Take-On Complete: Notify Client")
+                                 comp_date = get_val("Client Completion Email Sent Date")
+                                 rep_date = get_val("Client Report Generated Date")
+                                 
+                                 st.markdown("**Step 1: Generate Handover Report**")
+                                 if rep_date and rep_date != "None":
+                                     st.success(f"✅ Generated: {rep_date}")
+                                     emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
+                                     pdf_f = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
+                                     with open(pdf_f, "rb") as f: st.download_button("⬇️ Download Copy", f, file_name=pdf_f, mime="application/pdf")
+                                     if st.button("Unlock (Regenerate Report)", key="unlock_rep"): update_email_status(b_choice, "Client Report Generated Date", ""); st.cache_data.clear(); st.rerun()
+                                 else:
+                                     if st.button("📄 Generate & Lock Report", key="gen_pdf_comp"):
+                                         emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
+                                         create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
+                                         update_email_status(b_choice, "Client Report Generated Date")
+                                         st.cache_data.clear(); st.rerun()
+
+                                 st.markdown("**Step 2: Email Client**")
+                                 if comp_date and comp_date != "None":
+                                     st.success(f"✅ Sent: {comp_date}")
+                                     if st.button("Unlock Email", key="unlock_comp"): update_email_status(b_choice, "Client Completion Email Sent Date", ""); st.cache_data.clear(); st.rerun()
+                                 else:
+                                     c_mail = get_val("Client Email")
+                                     if c_mail and c_mail != "None":
+                                         bod = "Dear Client,\n\nTake-on complete.\n\nRegards, Pretor"
+                                         sub = urllib.parse.quote(f"Completed: {b_choice}")
+                                         lnk = f'<a href="mailto:{c_mail}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#09ab3b;color:white;padding:10px;border-radius:5px;text-decoration:none;">🚀 Draft Email</a>'
+                                         st.markdown(lnk, unsafe_allow_html=True)
+                                         st.write("")
+                                         if st.button("Mark as Sent", key="mark_comp"): update_email_status(b_choice, "Client Completion Email Sent Date"); st.cache_data.clear(); st.rerun()
+                                     else: st.warning("No Client Email.")
                              else: st.info("No agent items.")
                     with t2:
                          if not df_pending.empty:
@@ -450,7 +482,7 @@ def main_app():
                             else: st.info("No pending internal.")
                          else: st.info("No pending.")
                     st.divider()
-                    st.markdown("#### ✅ Completed / History (Locked)")
+                    st.markdown("#### ✅ History")
                     if not df_completed.empty:
                         ah = df_completed[df_completed['Responsibility'].isin(['Previous Agent', 'Both'])]
                         ih = df_completed[df_completed['Responsibility'].isin(['Pretor Group', 'Both'])]
@@ -512,7 +544,7 @@ def main_app():
                 if not cd.empty and 'Complex Name' in cd.columns:
                     curr_c = cd[cd['Complex Name'] == b_choice].copy()
                     if not curr_c.empty:
-                        ed_c = st.data_editor(curr_c[['id', 'Account Number', 'Service']], hide_index=True, key="cou_ed", column_config={"id": None})
+                        ed_c = st.data_editor(curr_c[['id', 'Account Number', 'Service']], hide_index=True, key="cou_ed", column_config={"id": None, "Balance": st.column_config.NumberColumn(format="R %.2f")})
                         if st.button("Save Council"): update_council_batch(ed_c); st.cache_data.clear(); st.success("Updated"); st.rerun()
                     else: st.info("No accounts.")
                 with st.form("add_c", clear_on_submit=True):
@@ -530,21 +562,9 @@ def main_app():
                     if st.button("Reset SARS"): update_email_status(b_choice, "SARS Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
                     tax_num = get_val("Tax Number")
-                    sars_body = f"Dear SARS Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
-                    if tax_num and str(tax_num).lower() not in ['none', 'nan', '']:
-                        st.success(f"📌 Tax: {tax_num}"); sars_body += f"Confirmed Tax Number: {tax_num}\n\n"
-                    else:
-                        st.warning("⚠️ No Tax Number."); sars_option = st.radio("Status:", ["Awaiting Number", "Register Scheme"], key="sars_rad"); sars_body += f"Note: {sars_option}\n\n"
-                    sars_body += "Regards,\nPretor Team"
-                    
-                    c1, c2 = st.columns([1,1])
-                    with c1:
-                        sars_em = s_dict.get("SARS", "")
-                        if sars_em:
-                            lnk = f'<a href="mailto:{sars_em}?subject=Handover: {b_choice}&body={urllib.parse.quote(sars_body)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Draft Email</a>'
-                            st.markdown(lnk, unsafe_allow_html=True)
-                    with c2:
-                        if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
+                    if tax_num and str(tax_num).lower() not in ['none', 'nan', '']: st.success(f"📌 Tax: {tax_num}")
+                    else: st.warning("⚠️ No Tax Number.")
+                    if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
                 
                 st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
@@ -582,30 +602,27 @@ def main_app():
                             if st.button(f"Mark {name} Sent", key=f"btn_{name}"): update_email_status(b_choice, col); st.cache_data.clear(); st.rerun()
                     st.divider()
 
-                # Insurance Internal
-                ins_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance"
-                ins_body = f"Hi Insurance,\n\nDocs at: {ins_path}\n\nPlease provide quotation.\n\nRegards."
-                render_handover("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", ins_body)
-                
-                # Wages
-                wag_body = f"Dear Wages,\n\nDocs at: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\salaries&wages\n\nRegards."
-                render_handover("Wages", "Wages Sent Date", "Wages", wag_body)
+                st.markdown("#### Insurance")
+                with st.expander("Edit Broker"):
+                     with st.form("eb"): 
+                        bn=st.text_input("Name", get_val("Insurance Broker Name")); be=st.text_input("Email", get_val("Insurance Broker Email"))
+                        if st.form_submit_button("Save"): save_broker_details(b_choice, bn, be); st.cache_data.clear(); st.rerun()
 
-                # Debt Collection Internal
-                debt_body = "Dear Debt Team,\n\nSee attached handover docs.\n\nRegards."
-                render_handover("Debt Collection (Internal)", "Debt Collection Sent Date", "Debt Collection", debt_body)
-                
-                # External Attorneys (Simplified view, full logic in previous)
-                st.markdown("**External Attorneys**")
-                att_sent = get_val("Attorney Email Sent Date")
-                if att_sent and att_sent != "None":
-                    st.success(f"✅ Notified: {att_sent}")
-                    if st.button("Reset Attorneys"): update_email_status(b_choice, "Attorney Email Sent Date", ""); st.cache_data.clear(); st.rerun()
+                st.markdown("**External Broker**")
+                b_sent = get_val("Broker Email Sent Date")
+                if b_sent and b_sent != "None":
+                    st.success(f"✅ Sent: {b_sent}")
+                    if st.button("Reset Broker"): update_email_status(b_choice, "Broker Email Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    st.info("Go to Arrears Details tab to view and email attorneys.")
-                    if st.button("Mark Attorneys Notified"): update_email_status(b_choice, "Attorney Email Sent Date"); st.cache_data.clear(); st.rerun()
+                    if st.button("Mark Broker Sent"): update_email_status(b_choice, "Broker Email Sent Date"); st.cache_data.clear(); st.rerun()
 
-                st.divider()
+                st.markdown("**Internal Insurance**")
+                render_handover("Internal Insurance", "Internal Ins Email Sent Date", "Insurance", f"Hi Insurance,\n\nDocs at: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\insurance\n\nRegards.")
+                
+                render_handover("Wages", "Wages Sent Date", "Wages", f"Dear Wages,\n\nDocs at: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\salaries&wages\n\nRegards.")
+                
+                render_handover("Debt Collection", "Debt Collection Sent Date", "Debt Collection")
+
                 st.markdown("#### Fee Confirmation")
                 fsent = get_val("Fee Confirmation Email Sent Date")
                 if fsent and fsent != "None":
@@ -615,66 +632,12 @@ def main_app():
                      if st.button("Mark Fee Email Sent"): update_email_status(b_choice, "Fee Confirmation Email Sent Date"); st.cache_data.clear(); st.rerun()
 
             elif sub_nav == "Client Updates":
-                st.subheader(f"Client Status Update: {b_choice}")
-                
-                # 1. Report Generation (Locked)
-                rep_date = get_val("Client Report Generated Date")
-                st.markdown("#### 1. Handover Report")
-                
-                # Prepare Data
-                emp_df = get_data("Employees"); arrears_df = get_data("Arrears"); council_df = get_data("Council")
-                checklist = get_data("Checklist")
-                c_items = checklist[checklist['Complex Name'] == b_choice] if not checklist.empty else pd.DataFrame()
-
-                if rep_date and rep_date != "None":
-                    st.success(f"✅ Report Generated on: {rep_date}")
-                    
-                    # Allow download of the locked report (regenerates fresh copy based on current data)
-                    pdf_file = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arrears_df, council_df)
-                    with open(pdf_file, "rb") as f:
-                        st.download_button("⬇️ Download Copy", f, file_name=pdf_file, mime="application/pdf")
-                    
-                    if st.button("Unlock (Regenerate Report)", key="unl_rep"):
-                        update_email_status(b_choice, "Client Report Generated Date", "")
-                        st.cache_data.clear()
-                        st.rerun()
-                else:
-                    if st.button("📄 Generate & Lock Report", key="gen_lock_rep"):
-                        pdf_file = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arrears_df, council_df)
-                        update_email_status(b_choice, "Client Report Generated Date")
-                        
-                        # We must allow the download immediately before reload, 
-                        # but Streamlit reruns on button click. 
-                        # Strategy: We update DB, then show success. The USER must reload or we use session state to show download once.
-                        # Simpler for now: Just update and reload. The user can "Download Copy" from the locked state.
-                        st.cache_data.clear()
-                        st.rerun()
-
-                st.divider()
-
-                # 2. Email Client
-                st.markdown("#### 2. Email Client")
-                comp_date = get_val("Client Completion Email Sent Date")
+                st.subheader("Client Status Update")
                 client_email = get_val("Client Email")
-                
-                if comp_date and comp_date != "None":
-                    st.success(f"✅ Sent on: {comp_date}")
-                    if st.button("Unlock Email", key="unl_email"):
-                        update_email_status(b_choice, "Client Completion Email Sent Date", "")
-                        st.cache_data.clear()
-                        st.rerun()
-                else:
-                    if client_email and client_email != "None":
-                        body = "Dear Client,\n\nUpdate attached.\n\nRegards."
-                        lnk = f'<a href="mailto:{client_email}?body={urllib.parse.quote(body)}" target="_blank" style="background-color:#09ab3b;color:white;padding:10px;border-radius:5px;text-decoration:none;">🚀 Draft Email</a>'
-                        st.markdown(lnk, unsafe_allow_html=True)
-                        st.write("")
-                        if st.button("Mark as Sent", key="mark_sent"):
-                            update_email_status(b_choice, "Client Completion Email Sent Date")
-                            st.cache_data.clear()
-                            st.rerun()
-                    else:
-                        st.warning("No Client Email.")
+                if client_email and client_email != "None":
+                    lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
+                    st.markdown(lnk, unsafe_allow_html=True)
+                else: st.warning("Add client email in Overview.")
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
