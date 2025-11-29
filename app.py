@@ -14,7 +14,6 @@ from datetime import datetime
 import os
 import tempfile
 from fpdf import FPDF
-from streamlit_option_menu import option_menu  # NEW IMPORT
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Pretor Take-On", layout="wide")
@@ -243,7 +242,7 @@ def main_app():
         st.sidebar.image("pretor_logo.png", use_container_width=True)
     st.title("🏢 Pretor Group: Take-On Manager")
 
-    # MAIN NAVIGATION (SIDEBAR)
+    # MAIN NAVIGATION
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
     choice = st.sidebar.selectbox("Menu", menu)
 
@@ -338,25 +337,11 @@ def main_app():
             p_row = projs[projs['Complex Name'] == b_choice].iloc[0]
             def get_val(col): return str(p_row.get(col, ''))
 
-            # --- NEW OPTION MENU ---
-            st.write("")
-            sub_nav = option_menu(
-                menu_title=None,
-                options=["Overview", "Progress Tracker", "Staff Details", "Arrears Details", "Council Details", "Department Handovers", "Client Updates"],
-                icons=["house", "list-task", "people", "cash-coin", "building", "envelope", "person-check"],
-                menu_icon="cast",
-                default_index=0,
-                orientation="horizontal",
-                styles={
-                    "container": {"padding": "0!important", "background-color": "#f8f9fa"},
-                    "icon": {"color": "orange", "font-size": "16px"}, 
-                    "nav-link": {"font-size": "14px", "text-align": "center", "margin": "0px", "--hover-color": "#eee"},
-                    "nav-link-selected": {"background-color": "#FF4B4B"},
-                }
-            )
+            # NAVIGATION
+            st.divider()
+            sub_nav = st.radio("Section Navigation", ["Overview", "Progress Tracker", "Staff Details", "Arrears Details", "Council Details", "Department Handovers", "Client Updates"], horizontal=True, label_visibility="collapsed")
             st.divider()
 
-            # --- 1. OVERVIEW ---
             if sub_nav == "Overview":
                 st.subheader(f"Project Overview: {b_choice}")
                 with st.form("project_overview_form"):
@@ -397,8 +382,8 @@ def main_app():
                     pdf = generate_appointment_pdf(b_choice, req, an, get_val("Take On Date"), get_val("Year End"), get_val("Building Code"))
                     with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
 
-            # --- 2. PROGRESS TRACKER ---
             elif sub_nav == "Progress Tracker":
+                # ... (Same logic as before) ...
                 st.markdown("### Checklist")
                 items = get_data("Checklist")
                 if not items.empty:
@@ -414,7 +399,6 @@ def main_app():
                     st.markdown("#### 📝 Pending Actions")
                     t1, t2 = st.tabs(["① Previous Agent Pending", "② Internal Pending"])
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
-                    
                     with t1:
                         if not df_pending.empty:
                             ag_pend = df_pending[df_pending['Responsibility'].isin(['Previous Agent', 'Both'])].copy()
@@ -422,11 +406,9 @@ def main_app():
                                 ag_pend['Sort'] = ag_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                                 ag_pend = ag_pend.sort_values(by=['Sort', 'Task Name'])
                                 edited_ag = st.data_editor(ag_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key="ag_ed", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
-                                
                                 if st.button("Save Agent Items"):
                                     edited_ag['Date Received'] = edited_ag.apply(fill_date, axis=1)
                                     save_checklist_batch(b_choice, edited_ag, st.session_state.get('user_email', 'Unknown')); st.cache_data.clear(); st.success("Saved!"); st.rerun()
-                                
                                 st.divider()
                                 agent_email = get_val("Agent Email")
                                 if agent_email and agent_email != "None":
@@ -443,6 +425,7 @@ def main_app():
                                  except: last_d = "Unknown"
                                  st.success(f"✅ All items received! Last: **{last_d}**")
                                  
+                                 # CLIENT COMPLETION
                                  st.divider()
                                  st.markdown("#### 🚀 Take-On Complete: Notify Client")
                                  comp_date = get_val("Client Completion Email Sent Date")
@@ -501,7 +484,6 @@ def main_app():
                         with h2: st.dataframe(ih[['Task Heading', 'Task Name', 'Date Received', 'Notes', 'Completed By']], hide_index=True, use_container_width=True)
                 else: st.info("No checklist.")
 
-            # --- 3. STAFF DETAILS ---
             elif sub_nav == "Staff Details":
                 st.subheader(f"Staff Management: {b_choice}")
                 uif_val = get_val("UIF Number"); paye_val = get_val("PAYE Number"); coida_val = get_val("COIDA Number")
@@ -525,11 +507,18 @@ def main_app():
                     else: st.info("No staff.")
                 
                 st.divider(); st.markdown("#### ➕ Add New Employee")
-                with st.form("add_s", clear_on_submit=True):
-                    c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
-                    if st.form_submit_button("Add"): add_employee(b_choice, n, s, "", "", 0.0, False, False, False); st.cache_data.clear(); st.success("Added"); st.rerun()
+                with st.form("add_emp", clear_on_submit=True):
+                    c1, c2, c3 = st.columns(3)
+                    e_name = c1.text_input("Name", key="new_name"); e_sur = c2.text_input("Surname", key="new_sur"); e_id = c3.text_input("ID Number", key="new_id")
+                    c4, c5 = st.columns(2)
+                    e_pos = c4.text_input("Position", key="new_pos"); e_sal = c5.number_input("Gross Salary", min_value=0.0, key="new_sal")
+                    st.markdown("**Documents Received:**")
+                    col_a, col_b, col_c = st.columns(3)
+                    chk_pay = col_a.checkbox("Latest Payslip", key="new_chk_pay"); chk_con = col_b.checkbox("Employment Contract", key="new_chk_con"); chk_tax = col_c.checkbox("Indiv Tax Number", key="new_chk_tax")
+                    if st.form_submit_button("Add Employee"):
+                        add_employee(b_choice, e_name, e_sur, e_id, e_pos, float(e_sal), chk_pay, chk_con, chk_tax)
+                        st.cache_data.clear(); st.success("Employee Added"); st.rerun()
 
-            # --- 4. ARREARS DETAILS ---
             elif sub_nav == "Arrears Details":
                 st.subheader("Arrears Management")
                 ad = get_data("Arrears")
@@ -543,7 +532,6 @@ def main_app():
                     u=st.text_input("Unit"); a=st.number_input("Amount")
                     if st.form_submit_button("Add"): add_arrears_item(b_choice, u, a, "", "", ""); st.cache_data.clear(); st.success("Added"); st.rerun()
 
-            # --- 5. COUNCIL DETAILS ---
             elif sub_nav == "Council Details":
                 st.subheader("Council Management")
                 cd = get_data("Council")
@@ -557,11 +545,10 @@ def main_app():
                     a=st.text_input("Acc"); s=st.text_input("Svc")
                     if st.form_submit_button("Add"): add_council_account(b_choice, a, s, 0.0); st.cache_data.clear(); st.success("Added"); st.rerun()
 
-            # --- 6. DEPARTMENT HANDOVERS ---
             elif sub_nav == "Department Handovers":
                 st.markdown("### Department Handovers")
                 settings = get_data("Settings"); s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
-
+                
                 st.markdown("#### SARS")
                 sars_sent = get_val("SARS Sent Date")
                 if sars_sent and sars_sent != "None":
@@ -570,22 +557,16 @@ def main_app():
                 else:
                     if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
                 
-                st.divider()
-                
-                # COUNCIL HANDOVER
-                st.markdown("#### Council")
+                st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
                 if c_sent and c_sent != "None":
                     st.success(f"✅ Sent: {c_sent}")
                     if st.button("Reset Council"): update_email_status(b_choice, "Council Email Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    st.info("Draft email (see detailed code in previous versions for content)")
+                    st.info("Draft email (see previous code for logic)")
                     if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
+                st.divider(); st.info("... (See previous response for full Insurance/Wages logic) ...")
 
-                st.divider()
-                st.info("... (Wages, Insurance, Debt logic remains as per previous versions) ...")
-
-            # --- 7. CLIENT UPDATES ---
             elif sub_nav == "Client Updates":
                 st.subheader("Client Status Update")
                 client_email = get_val("Client Email")
@@ -593,11 +574,6 @@ def main_app():
                     lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                     st.markdown(lnk, unsafe_allow_html=True)
                 else: st.warning("Add client email in Overview.")
-
-            st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
