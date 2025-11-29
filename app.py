@@ -292,6 +292,29 @@ def main_app():
                 summary_list.append({"Complex Name": c_name, "Manager": row.get('Assigned Manager', ''), "Take On Date": row.get('Take On Date', ''), "Progress": progress_val, "Status": status, "Items Pending": total - received})
             summ_df = pd.DataFrame(summary_list)
             st.dataframe(summ_df, column_config={"Progress": st.column_config.ProgressColumn(format="%.0f%%", min_value=0, max_value=1)}, hide_index=True)
+            
+            # MINI DASHBOARD (GLOBAL)
+            st.divider()
+            st.markdown("### 📋 My Task Summary")
+            user_email = st.session_state.get('user_email', '').lower()
+            # Ensure manager email is string and lowercase
+            df['Manager Email'] = df['Manager Email'].astype(str).str.lower()
+            my_projects = df[df['Manager Email'] == user_email]
+            
+            if not my_projects.empty:
+                for _, proj in my_projects.iterrows():
+                    p_name = proj['Complex Name']
+                    # Find pending tasks
+                    p_tasks = checklist[(checklist['Complex Name'] == p_name) & (checklist['Received'].astype(str).str.lower() != 'true') & (checklist['Delete'] != True)] if not checklist.empty else pd.DataFrame()
+                    count = len(p_tasks)
+                    
+                    if count > 0:
+                        with st.expander(f"🔥 {p_name} ({count} Pending)"):
+                            for _, task in p_tasks.iterrows():
+                                st.write(f"- {task['Task Name']}")
+            else:
+                st.info("No projects assigned to you currently.")
+                
             if st.button("Download Weekly Report PDF"):
                 pdf = generate_weekly_report_pdf(summary_list)
                 with open(pdf, "rb") as f: st.download_button("⬇️ Download PDF", f, file_name=pdf)
@@ -516,9 +539,9 @@ def main_app():
                                         if st.button("Upload File"):
                                             row_id = ag_pend[ag_pend['Task Name'] == selected_item].iloc[0]['id']
                                             path = f"{b_choice}/Checklist/{selected_item}_{uploaded_file.name}"
-                                            url = upload_file_to_supabase(uploaded_file, path)
-                                            if url:
-                                                update_document_url("Checklist", row_id, url)
+                                            doc_url = upload_file_to_supabase(uploaded_file, path)
+                                            if doc_url:
+                                                update_document_url("Checklist", row_id, doc_url)
                                                 st.success(f"Uploaded! Please tick '{selected_item}' below and Save.")
 
                                 edited_ag = st.data_editor(ag_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key="ag_ed", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
@@ -617,6 +640,21 @@ def main_app():
                         ed_s = st.data_editor(curr_s[[c for c in cols if c in curr_s.columns]], hide_index=True, key="stf_ed", column_config={"id": None, "Salary": st.column_config.NumberColumn(format="R %.2f")})
                         if st.button("Save Staff"): update_employee_batch(ed_s); st.cache_data.clear(); st.success("Updated!"); st.rerun()
                     else: st.info("No staff.")
+                    
+                    # --- STAFF UPLOADER ---
+                    st.markdown("##### 📎 Upload Contract/ID")
+                    s_list = curr_s['Name'].tolist() if not curr_s.empty else []
+                    sel_s = st.selectbox("Select Employee", ["None"] + s_list)
+                    if sel_s != "None":
+                        up_s = st.file_uploader("Upload Document", key="up_stf")
+                        if up_s and st.button("Upload to Staff"):
+                            row_id = curr_s[curr_s['Name'] == sel_s].iloc[0]['id']
+                            path = f"{b_choice}/Staff/{sel_s}_{up_s.name}"
+                            doc_url = upload_file_to_supabase(up_s, path)
+                            if doc_url:
+                                update_document_url("Employees", row_id, doc_url)
+                                st.success("Uploaded!")
+                
                 st.divider(); st.markdown("#### ➕ Add New Employee")
                 with st.form("add_s", clear_on_submit=True):
                     c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
@@ -637,6 +675,19 @@ def main_app():
                     if not curr_a.empty:
                          ed_a = st.data_editor(curr_a[['id', 'Unit Number', 'Outstanding Amount']], hide_index=True, key="arr_ed", column_config={"id": None, "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f")})
                          if st.button("Save Arrears"): update_arrears_batch(ed_a); st.cache_data.clear(); st.success("Updated"); st.rerun()
+                         
+                         # --- ARREARS UPLOAD ---
+                         st.markdown("##### 📎 Upload Legal Handover")
+                         u_list = curr_a['Unit Number'].astype(str).tolist()
+                         sel_u = st.selectbox("Select Unit", ["None"] + u_list)
+                         if sel_u != "None":
+                             up_a = st.file_uploader("Upload File", key="up_arr")
+                             if up_a and st.button("Upload to Arrears"):
+                                 row_id = curr_a[curr_a['Unit Number'].astype(str) == sel_u].iloc[0]['id']
+                                 path = f"{b_choice}/Arrears/{sel_u}_{up_a.name}"
+                                 doc_url = upload_file_to_supabase(up_a, path)
+                                 if doc_url: update_document_url("Arrears", row_id, doc_url); st.success("Uploaded!")
+
                     else: st.info("No arrears.")
                 with st.form("add_a", clear_on_submit=True):
                     u=st.text_input("Unit"); a=st.number_input("Amount"); m=st.text_input("Attorney Email"); p=st.text_input("Attorney Phone")
@@ -663,6 +714,18 @@ def main_app():
                     if not curr_c.empty:
                         ed_c = st.data_editor(curr_c[['id', 'Account Number', 'Service']], hide_index=True, key="cou_ed", column_config={"id": None, "Balance": st.column_config.NumberColumn(format="R %.2f")})
                         if st.button("Save Council"): update_council_batch(ed_c); st.cache_data.clear(); st.success("Updated"); st.rerun()
+                        
+                        # --- COUNCIL UPLOAD ---
+                        st.markdown("##### 📎 Upload Account Statement")
+                        ac_list = curr_c['Account Number'].astype(str).tolist()
+                        sel_ac = st.selectbox("Select Account", ["None"] + ac_list)
+                        if sel_ac != "None":
+                            up_c = st.file_uploader("Upload File", key="up_cou")
+                            if up_c and st.button("Upload to Council"):
+                                row_id = curr_c[curr_c['Account Number'].astype(str) == sel_ac].iloc[0]['id']
+                                path = f"{b_choice}/Council/{sel_ac}_{up_c.name}"
+                                doc_url = upload_file_to_supabase(up_c, path)
+                                if doc_url: update_document_url("Council", row_id, doc_url); st.success("Uploaded!")
                     else: st.info("No accounts.")
                 with st.form("add_c", clear_on_submit=True):
                     a=st.text_input("Acc"); s=st.text_input("Svc")
@@ -682,11 +745,22 @@ def main_app():
                 
                 st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
+                # NEW: Check for docs in Council table
+                c_docs = " (Files Attached)" if not council_df.empty else ""
+                c_body = f"Dear Council Team,\n\nPlease find attached account details{c_docs}.\n\nRegards."
+                
                 if c_sent and c_sent != "None":
                     st.success(f"✅ Sent: {c_sent}")
                     if st.button("Reset Council"): update_email_status(b_choice, "Council Email Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
+                    c1, c2 = st.columns([1,1])
+                    with c1:
+                        muni_em = s_dict.get("Municipal", "")
+                        if muni_em:
+                            lnk = f'<a href="mailto:{muni_em}?subject=Handover: {b_choice}&body={urllib.parse.quote(c_body)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Draft Email</a>'
+                            st.markdown(lnk, unsafe_allow_html=True)
+                    with c2:
+                        if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
 
                 st.divider()
                 def render_handover(name, col, email_key, custom_body=None):
@@ -745,11 +819,6 @@ def main_app():
                     lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                     st.markdown(lnk, unsafe_allow_html=True)
                 else: st.warning("Add client email in Overview.")
-
-            st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
