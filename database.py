@@ -28,17 +28,14 @@ except Exception as e:
 
 # --- AUTHENTICATION ---
 def login_user(email, password):
-    """Attempts login. Returns (user_object, error_message)."""
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
         return response.user, None
     except Exception as e:
-        # Return the specific error message
         return None, str(e)
 
 def log_access(user_email):
     try:
-        # Ensure table 'LoginLogs' exists in Supabase
         supabase.table("LoginLogs").insert({"user_email": user_email}).execute()
     except Exception as e:
         print(f"Logging failed: {e}")
@@ -162,6 +159,13 @@ def save_global_settings(settings_dict):
         for dept, email in settings_dict.items():
             supabase.table("Settings").insert({"Department": dept, "Email": email}).execute()
     except Exception as e: print(e)
+
+# --- STORAGE (Future Use) ---
+def upload_file_to_supabase(file_obj, file_path):
+    pass # Placeholder for future feature to prevent import errors
+
+def update_checklist_document(item_id, doc_url):
+    pass
 
 # --- PLACEHOLDERS ---
 def add_service_provider(n, t, c): pass 
