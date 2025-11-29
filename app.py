@@ -389,27 +389,25 @@ def main_app():
                 st.subheader(f"Project Overview: {b_choice}")
                 
                 # --- MINI DASHBOARD ---
-                # Fetch data first for calcs
-                checklist_d = get_data("Checklist")
-                arrears_d = get_data("Arrears")
-                staff_d = get_data("Employees")
-                council_d = get_data("Council")
+                checklist = get_data("Checklist")
+                arrears = get_data("Arrears")
+                staff = get_data("Employees")
+                council = get_data("Council")
                 
                 c_checklist = checklist[checklist['Complex Name'] == b_choice] if not checklist.empty else pd.DataFrame()
                 total_tasks = len(c_checklist)
                 done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
                 prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
                 
-                c_arrears = arrears_d[arrears_d['Complex Name'] == b_choice] if not arrears_d.empty and 'Complex Name' in arrears_d.columns else pd.DataFrame()
+                c_arrears = arrears[arrears['Complex Name'] == b_choice] if not arrears.empty and 'Complex Name' in arrears.columns else pd.DataFrame()
                 debt_val = c_arrears['Outstanding Amount'].sum() if not c_arrears.empty else 0
                 
-                c_staff = staff_d[staff_d['Complex Name'] == b_choice] if not staff_d.empty and 'Complex Name' in staff_d.columns else pd.DataFrame()
+                c_staff = staff[staff['Complex Name'] == b_choice] if not staff.empty and 'Complex Name' in staff.columns else pd.DataFrame()
                 staff_count = len(c_staff)
                 
-                c_coun = council_d[council_d['Complex Name'] == b_choice] if not council_d.empty and 'Complex Name' in council_d.columns else pd.DataFrame()
+                c_coun = council[council['Complex Name'] == b_choice] if not council.empty and 'Complex Name' in council.columns else pd.DataFrame()
                 coun_count = len(c_coun)
 
-                # Render Dashboard
                 col_d1, col_d2, col_d3, col_d4 = st.columns(4)
                 col_d1.metric("Checklist Progress", f"{int(prog_val*100)}%")
                 col_d1.progress(prog_val)
@@ -417,11 +415,8 @@ def main_app():
                 col_d3.metric("Staff Loaded", staff_count)
                 col_d4.metric("Council Accounts", coun_count)
                 
-                # Warnings
                 tax_check = get_val("Tax Number")
-                if not tax_check or tax_check == 'None':
-                    st.warning("⚠️ Alert: Tax Number is missing!")
-
+                if not tax_check or tax_check == 'None': st.warning("⚠️ Alert: Tax Number is missing!")
                 st.divider()
 
                 with st.form("project_overview_form"):
