@@ -346,9 +346,9 @@ def main_app():
                 default_index=0,
                 orientation="horizontal",
                 styles={
-                    "container": {"padding": "0!important", "background-color": "#f8f9fa"},
+                    "container": {"padding": "0!important"},
                     "icon": {"color": "orange", "font-size": "16px"}, 
-                    "nav-link": {"font-size": "14px", "text-align": "center", "margin": "0px", "--hover-color": "#eee"},
+                    "nav-link": {"font-size": "14px", "text-align": "center", "margin": "0px"},
                     "nav-link-selected": {"background-color": "#FF4B4B"},
                 }
             )
@@ -561,27 +561,15 @@ def main_app():
                     st.success(f"✅ Sent: {sars_sent}")
                     if st.button("Reset SARS"): update_email_status(b_choice, "SARS Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    tax_num = get_val("Tax Number")
-                    if tax_num and str(tax_num).lower() not in ['none', 'nan', '']: st.success(f"📌 Tax: {tax_num}")
-                    else: st.warning("⚠️ No Tax Number.")
                     if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
                 
                 st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
-                c_path = f"Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council"
-                c_body = f"Dear Council Team,\n\nDocs at: {c_path}\n\nPlease load to Pretor Portal.\n\nRegards."
                 if c_sent and c_sent != "None":
                     st.success(f"✅ Sent: {c_sent}")
                     if st.button("Reset Council"): update_email_status(b_choice, "Council Email Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    c1, c2 = st.columns([1,1])
-                    with c1:
-                        muni_em = s_dict.get("Municipal", "")
-                        if muni_em:
-                            lnk = f'<a href="mailto:{muni_em}?subject=Handover: {b_choice}&body={urllib.parse.quote(c_body)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Draft Email</a>'
-                            st.markdown(lnk, unsafe_allow_html=True)
-                    with c2:
-                        if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
+                    if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
 
                 st.divider()
                 def render_handover(name, col, email_key, custom_body=None):
@@ -638,6 +626,11 @@ def main_app():
                     lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                     st.markdown(lnk, unsafe_allow_html=True)
                 else: st.warning("Add client email in Overview.")
+
+            st.divider()
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
