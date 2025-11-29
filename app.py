@@ -292,6 +292,29 @@ def main_app():
                 summary_list.append({"Complex Name": c_name, "Manager": row.get('Assigned Manager', ''), "Take On Date": row.get('Take On Date', ''), "Progress": progress_val, "Status": status, "Items Pending": total - received})
             summ_df = pd.DataFrame(summary_list)
             st.dataframe(summ_df, column_config={"Progress": st.column_config.ProgressColumn(format="%.0f%%", min_value=0, max_value=1)}, hide_index=True)
+            
+            # MINI DASHBOARD (GLOBAL)
+            st.divider()
+            st.markdown("### 📋 My Task Summary")
+            user_email = st.session_state.get('user_email', '').lower()
+            # Ensure manager email is string and lowercase
+            df['Manager Email'] = df['Manager Email'].astype(str).str.lower()
+            my_projects = df[df['Manager Email'] == user_email]
+            
+            if not my_projects.empty:
+                for _, proj in my_projects.iterrows():
+                    p_name = proj['Complex Name']
+                    # Find pending tasks
+                    p_tasks = checklist[(checklist['Complex Name'] == p_name) & (checklist['Received'].astype(str).str.lower() != 'true') & (checklist['Delete'] != True)] if not checklist.empty else pd.DataFrame()
+                    count = len(p_tasks)
+                    
+                    if count > 0:
+                        with st.expander(f"🔥 {p_name} ({count} Pending)"):
+                            for _, task in p_tasks.iterrows():
+                                st.write(f"- {task['Task Name']}")
+            else:
+                st.info("No projects assigned to you currently.")
+                
             if st.button("Download Weekly Report PDF"):
                 pdf = generate_weekly_report_pdf(summary_list)
                 with open(pdf, "rb") as f: st.download_button("⬇️ Download PDF", f, file_name=pdf)
@@ -405,6 +428,7 @@ def main_app():
                 done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
                 prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
                 
+                # FIX: Force numeric conversion for arrears summary
                 c_arrears = pd.DataFrame()
                 debt_val = 0.0
                 if not arrears.empty and 'Complex Name' in arrears.columns:
@@ -717,27 +741,14 @@ def main_app():
                     st.success(f"✅ Sent: {sars_sent}")
                     if st.button("Reset SARS"): update_email_status(b_choice, "SARS Sent Date", ""); st.cache_data.clear(); st.rerun()
                 else:
-                    tax_num = get_val("Tax Number")
-                    sars_body = f"Dear SARS Team,\n\nPlease find attached the handover documents for {b_choice}.\n\n"
-                    if tax_num and str(tax_num).lower() not in ['none', 'nan', '']:
-                        st.success(f"📌 Tax: {tax_num}"); sars_body += f"Confirmed Tax Number: {tax_num}\n\n"
-                    else:
-                        st.warning("⚠️ No Tax Number."); sars_option = st.radio("Status:", ["Awaiting Number", "Register Scheme"], key="sars_rad"); sars_body += f"Note: {sars_option}\n\n"
-                    sars_body += "Regards,\nPretor Team"
-                    
-                    c1, c2 = st.columns([1,1])
-                    with c1:
-                        sars_em = s_dict.get("SARS", "")
-                        if sars_em:
-                            lnk = f'<a href="mailto:{sars_em}?subject=Handover: {b_choice}&body={urllib.parse.quote(sars_body)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Draft Email</a>'
-                            st.markdown(lnk, unsafe_allow_html=True)
-                    with c2:
-                        if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
+                    if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
                 
                 st.divider(); st.markdown("#### Council")
                 c_sent = get_val("Council Email Sent Date")
                 
                 # NEW: Check for docs in Council table
+                council_df = get_data("Council")
+                if council_df.empty: council_df = get_data("council")
                 c_docs = " (Files Attached)" if not council_df.empty else ""
                 c_body = f"Dear Council Team,\n\nPlease find attached account details{c_docs}.\n\nPath: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council\n\nPlease load onto Pretor Portal.\n\nRegards."
                 
@@ -811,11 +822,6 @@ def main_app():
                     lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                     st.markdown(lnk, unsafe_allow_html=True)
                 else: st.warning("Add client email in Overview.")
-
-            st.divider()
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
