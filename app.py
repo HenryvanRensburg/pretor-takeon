@@ -59,7 +59,7 @@ class AgentRequestPDF(BasePDF):
     def add_item(self, text):
         self.set_font('Arial', '', 10); self.cell(10); self.multi_cell(0, 5, "- " + self.clean_text(text)); self.ln(1)
 
-def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date, immediate_items_list):
+def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date):
     pdf = AgentRequestPDF()
     pdf.add_page()
     pdf.set_font('Arial', 'B', 14); pdf.cell(0, 10, 'Handover Request: Managing Agent Appointment', 0, 1, 'C'); pdf.ln(5)
@@ -67,9 +67,9 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
-    # Split Dataframe
-    df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
-    df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
+    # AUTOMATIC SPLIT BASED ON DB 'Timing' COLUMN
+    df_immediate = checklist_df[checklist_df['Timing'] == 'Immediate']
+    df_month_end = checklist_df[checklist_df['Timing'] == 'Month-End']
     
     pdf.section_header("SECTION A: REQUIRED IMMEDIATELY")
     pdf.set_font('Arial', 'I', 9); pdf.multi_cell(0, 5, "Please provide the following documents at your earliest convenience."); pdf.ln(2)
@@ -105,64 +105,17 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
     pdf.cell(80); pdf.cell(30, 10, 'Comprehensive Handover Report', 0, 0, 'C'); pdf.ln(20)
     
     pdf.section_title(f"1. Overview: {complex_name}"); pdf.ln(2)
-    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 6, "General", 0, 1)
-    for k in ["Building Code", "Type", "No of Units", "SS Number", "Erf Number", "CSOS Number"]:
-        v = p_row.get(k, ''); pdf.entry_row(k+":", v) if v and v != 'None' else None
-    pdf.ln(2); pdf.set_font('Arial', 'B', 10); pdf.cell(0, 6, "Financial", 0, 1)
-    for k in ["Year End", "Mgmt Fees", "VAT Number", "Tax Number", "Auditor"]:
-        v = p_row.get(k, ''); pdf.entry_row(k+":", v) if v and v != 'None' else None
-    pdf.ln(2); pdf.set_font('Arial', 'B', 10); pdf.cell(0, 6, "Team", 0, 1)
-    for k, v_col in {"Manager": "Assigned Manager", "PM Email": "Manager Email", "Client": "Client Email"}.items():
-        v = p_row.get(v_col, ''); pdf.entry_row(k+":", v) if v and v != 'None' else None
+    fields = {"Building Code":"Building Code","Type":"Type","Units":"No of Units","Year End":"Year End","Address":"Physical Address","Manager":"Assigned Manager","Email":"Manager Email"}
+    for k,v in fields.items(): pdf.entry_row(k, p_row.get(v,''))
     pdf.ln(5)
-
-    pdf.section_title("2. Items Received from Previous Agent"); pdf.ln(2)
-    if not checklist_df.empty:
-        agent_items = checklist_df[(checklist_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (checklist_df['Received'].astype(str).str.lower() == 'true')]
-        if not agent_items.empty:
-            pdf.set_font("Arial", "", 9)
-            for _, row in agent_items.iterrows():
-                pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(row['Task Name'])} (Rec: {row.get('Date Received','')})")
-        else: pdf.cell(0, 6, "None received yet.", 0, 1)
-    else: pdf.cell(0, 6, "No data.", 0, 1)
-    pdf.ln(4)
-
-    pdf.section_title("3. Internal Actions Completed"); pdf.ln(2)
-    if not checklist_df.empty:
-        pretor_items = checklist_df[(checklist_df['Responsibility'].isin(['Pretor Group', 'Both'])) & (checklist_df['Received'].astype(str).str.lower() == 'true')]
-        if not pretor_items.empty:
-            pdf.set_font("Arial", "", 9)
-            for _, row in pretor_items.iterrows():
-                pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(row['Task Name'])}")
-        else: pdf.cell(0, 6, "None completed yet.", 0, 1)
-    else: pdf.cell(0, 6, "No data.", 0, 1)
-    pdf.ln(4)
-
-    pdf.section_title("4. Staff Loaded"); pdf.ln(2)
-    if not emp_df.empty:
-        c_emp = emp_df[emp_df['Complex Name'] == complex_name]
-        if not c_emp.empty:
-            pdf.set_font("Arial", "B", 8); pdf.cell(60, 6, "Name", 1); pdf.cell(50, 6, "Position", 1); pdf.cell(30, 6, "Salary", 1); pdf.ln()
-            pdf.set_font("Arial", "", 8)
-            for _, row in c_emp.iterrows():
-                pdf.cell(60, 6, pdf.clean_text(f"{row.get('Name','')} {row.get('Surname','')}"), 1)
-                pdf.cell(50, 6, pdf.clean_text(str(row.get('Position',''))), 1)
-                pdf.cell(30, 6, f"R{row.get('Salary',0)}", 1); pdf.ln()
-        else: pdf.cell(0, 6, "No staff.", 0, 1)
-    else: pdf.cell(0, 6, "No data.", 0, 1)
-    pdf.ln(4)
-
-    pdf.section_title("5. Department Handovers"); pdf.ln(2)
-    pdf.set_font("Arial", "", 9)
-    handovers = { "Wages": "Wages Sent Date", "Council": "Council Email Sent Date", "Debt": "Debt Collection Sent Date", "SARS": "SARS Sent Date" }
-    for k, v in handovers.items():
-        d = p_row.get(v)
-        st_txt = f"Done ({d})" if d and d != "None" else "Pending"
-        pdf.cell(40, 6, k+":", 0); pdf.cell(0, 6, st_txt, 0, 1)
     
-    temp_dir = tempfile.gettempdir()
-    filename = os.path.join(temp_dir, f"Handover_Report_{complex_name}.pdf")
-    pdf.output(filename); return filename
+    pdf.section_title("2. Pending Items"); pdf.ln(2)
+    pending = checklist_df[(checklist_df['Received'].astype(str).str.lower() != 'true') & (checklist_df['Delete'] != True)]
+    if not pending.empty:
+        for _, r in pending.iterrows(): pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(r['Task Name'])} ({r.get('Timing','Unknown')})")
+    else: pdf.cell(0, 6, "No pending items.", 0, 1)
+    
+    temp_dir = tempfile.gettempdir(); filename = os.path.join(temp_dir, f"Report_{complex_name}.pdf"); pdf.output(filename); return filename
 
 # --- LOGIN ---
 def login_screen():
@@ -209,9 +162,10 @@ def main_app():
     elif choice == "Master Schedule":
         st.subheader("Master Checklist"); df = get_data("Master"); st.dataframe(df)
         with st.form("add_master"):
-            c1,c2,c3,c4 = st.columns(4)
+            c1,c2,c3,c4,c5 = st.columns(5)
             n = c1.text_input("Task"); cat = c2.selectbox("Cat", ["Both","BC","HOA"]); resp = c3.selectbox("Resp", ["Previous Agent","Pretor Group","Both"]); head = c4.selectbox("Head", ["Take-On","Financial","Legal","Statutory Compliance","Insurance","City Council","Building Compliance","Employee","General"])
-            if st.form_submit_button("Add"): add_master_item(n, cat, resp, head); st.cache_data.clear(); st.success("Added"); st.rerun()
+            time = c5.selectbox("Timing", ["Immediate", "Month-End"]) 
+            if st.form_submit_button("Add"): add_master_item(n, cat, resp, head, time); st.cache_data.clear(); st.success("Added"); st.rerun()
 
     elif choice == "Global Settings":
         st.subheader("Settings"); st.info("Manage department emails here.")
@@ -313,7 +267,7 @@ def main_app():
             an = c1.text_input("Agent Name", value=get_val("Agent Name"), key=f"an_{b_choice}")
             ae = c2.text_input("Agent Email", value=get_val("Agent Email"), key=f"ae_{b_choice}")
 
-            # --- HANDOVER STRATEGY ---
+            # --- HANDOVER STRATEGY (AUTO LOAD & SPLIT) ---
             st.markdown("#### 📋 Handover Strategy: Immediate Items")
             full_chk = get_data("Checklist")
             
@@ -326,26 +280,22 @@ def main_app():
             if agent_task_df.empty:
                 st.warning("⚠️ No checklist items found for this building.")
                 if st.button("📥 Load Standard Checklist from Master", key="init_chk"):
-                    res = initialize_checklist(b_choice)
+                    res = initialize_checklist(b_choice, get_val("Type"))
                     if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
                     else: st.error(f"Failed: {res}")
             else:
-                # 3. SHOW SELECTION
-                month_end_cats = ['Financial', 'Employee', 'City Council']
-                default_immediate = agent_task_df[~agent_task_df['Task Heading'].isin(month_end_cats)]['Task Name'].tolist()
-                all_options = agent_task_df['Task Name'].tolist()
+                # 3. AUTO SPLIT BASED ON TIMING
+                immediate_tasks = agent_task_df[agent_task_df['Timing'] == 'Immediate']
                 
-                selected_immediate = st.multiselect("Items Required Immediately:", options=all_options, default=[x for x in default_immediate if x in all_options], key=f"imm_{b_choice}")
-                
-                if st.button("Generate Split Request PDF"):
+                if st.button("Generate Request PDF & Email"):
                     if ae and not validate_email(ae): st.error("Invalid Agent Email")
                     else:
                         update_project_agent_details(b_choice, an, ae)
-                        pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"), selected_immediate)
-                        with open(pdf, "rb") as f: st.download_button("Download Split PDF", f, file_name=pdf)
+                        pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"))
+                        with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
                         
-                        imm_text = "\n".join([f"- {x}" for x in selected_immediate])
-                        email_body = f"Dear {an},\n\nWe confirm our appointment for {b_choice}.\n\nPlease provide these immediately:\n{imm_text}\n\nRemainder by 10th.\n\nRegards, Pretor"
+                        imm_text = "\n".join([f"- {x}" for x in immediate_tasks['Task Name'].tolist()])
+                        email_body = f"Dear {an},\n\nWe confirm our appointment for {b_choice}.\n\nPlease provide the following URGENTLY:\n{imm_text}\n\nThe remaining items are required by the 10th.\n\nRegards, Pretor"
                         link = f'<a href="mailto:{ae}?subject=Handover&body={urllib.parse.quote(email_body)}" target="_blank">📧 Draft Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
 
@@ -400,58 +350,58 @@ def main_app():
                                 st.markdown(f'<a href="mailto:{agent_email}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Follow Up Email</a>', unsafe_allow_html=True)
                         else: st.info("No pending items.")
                     else:
-                         ag_comp = c_items[(c_items['Responsibility'].isin(['Previous Agent', 'Both'])) & (c_items['Received'] == True)]
-                         if not ag_comp.empty:
-                             try: last_d = pd.to_datetime(ag_comp['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
-                             except: last_d = "Unknown"
-                             st.success(f"✅ All items received! Last: **{last_d}**")
-                             
-                             st.divider()
-                             st.markdown("#### 🚀 Take-On Complete: Notify Client")
-                             comp_date = get_val("Client Completion Email Sent Date")
-                             rep_date = get_val("Client Report Generated Date")
-                             
-                             st.markdown("**Step 1: Generate Handover Report**")
-                             if rep_date and rep_date != "None":
-                                 st.success(f"✅ Generated: {rep_date}")
-                                 emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
-                                 pdf_f = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
-                                 with open(pdf_f, "rb") as f: st.download_button("⬇️ Download Copy", f, file_name=pdf_f, mime="application/pdf", key=f"dl_rep_{b_choice}")
-                                 if st.button("Unlock (Regenerate Report)", key=f"unlock_rep_{b_choice}"): update_email_status(b_choice, "Client Report Generated Date", ""); st.cache_data.clear(); st.rerun()
-                             else:
-                                 if st.button("📄 Generate & Lock Report", key=f"gen_pdf_comp_{b_choice}"):
-                                     emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
-                                     create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
-                                     update_email_status(b_choice, "Client Report Generated Date")
-                                     st.cache_data.clear(); st.rerun()
+                            ag_comp = c_items[(c_items['Responsibility'].isin(['Previous Agent', 'Both'])) & (c_items['Received'] == True)]
+                            if not ag_comp.empty:
+                                try: last_d = pd.to_datetime(ag_comp['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
+                                except: last_d = "Unknown"
+                                st.success(f"✅ All items received! Last: **{last_d}**")
+                                
+                                st.divider()
+                                st.markdown("#### 🚀 Take-On Complete: Notify Client")
+                                comp_date = get_val("Client Completion Email Sent Date")
+                                rep_date = get_val("Client Report Generated Date")
+                                
+                                st.markdown("**Step 1: Generate Handover Report**")
+                                if rep_date and rep_date != "None":
+                                    st.success(f"✅ Generated: {rep_date}")
+                                    emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
+                                    pdf_f = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
+                                    with open(pdf_f, "rb") as f: st.download_button("⬇️ Download Copy", f, file_name=pdf_f, mime="application/pdf", key=f"dl_rep_{b_choice}")
+                                    if st.button("Unlock (Regenerate Report)", key=f"unlock_rep_{b_choice}"): update_email_status(b_choice, "Client Report Generated Date", ""); st.cache_data.clear(); st.rerun()
+                                else:
+                                    if st.button("📄 Generate & Lock Report", key=f"gen_pdf_comp_{b_choice}"):
+                                        emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
+                                        create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
+                                        update_email_status(b_choice, "Client Report Generated Date")
+                                        st.cache_data.clear(); st.rerun()
 
-                             st.markdown("**Step 2: Email Client**")
-                             if comp_date and comp_date != "None":
-                                 st.success(f"✅ Sent: {comp_date}")
-                                 if st.button("Unlock Email", key=f"unlock_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date", ""); st.cache_data.clear(); st.rerun()
-                             else:
-                                 c_mail = get_val("Client Email")
-                                 if c_mail and c_mail != "None":
-                                     bod = "Dear Client,\n\nTake-on complete.\n\nRegards, Pretor"
-                                     sub = urllib.parse.quote(f"Completed: {b_choice}")
-                                     lnk = f'<a href="mailto:{c_mail}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#09ab3b;color:white;padding:10px;border-radius:5px;text-decoration:none;">🚀 Draft Email</a>'
-                                     st.markdown(lnk, unsafe_allow_html=True)
-                                     st.write("")
-                                     if st.button("Mark as Sent", key=f"mark_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date"); st.cache_data.clear(); st.rerun()
-                                 else: st.warning("No Client Email.")
-                         else: st.info("No agent items.")
+                                st.markdown("**Step 2: Email Client**")
+                                if comp_date and comp_date != "None":
+                                    st.success(f"✅ Sent: {comp_date}")
+                                    if st.button("Unlock Email", key=f"unlock_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date", ""); st.cache_data.clear(); st.rerun()
+                                else:
+                                    c_mail = get_val("Client Email")
+                                    if c_mail and c_mail != "None":
+                                        bod = "Dear Client,\n\nTake-on complete.\n\nRegards, Pretor"
+                                        sub = urllib.parse.quote(f"Completed: {b_choice}")
+                                        lnk = f'<a href="mailto:{c_mail}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#09ab3b;color:white;padding:10px;border-radius:5px;text-decoration:none;">🚀 Draft Email</a>'
+                                        st.markdown(lnk, unsafe_allow_html=True)
+                                        st.write("")
+                                        if st.button("Mark as Sent", key=f"mark_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date"); st.cache_data.clear(); st.rerun()
+                                    else: st.warning("No Client Email.")
+                            else: st.info("No agent items.")
                 with t2:
-                     if not df_pending.empty:
-                        int_pend = df_pending[df_pending['Responsibility'].isin(['Pretor Group', 'Both'])].copy()
-                        if not int_pend.empty:
-                            int_pend['Sort'] = int_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
-                            int_pend = int_pend.sort_values(by=['Sort', 'Task Name'])
-                            ed_int = st.data_editor(int_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key=f"int_ed_{b_choice}", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
-                            if st.button("Save Internal Items", key=f"sv_int_{b_choice}"):
-                                ed_int['Date Received'] = ed_int.apply(fill_date, axis=1)
-                                save_checklist_batch(b_choice, ed_int, st.session_state.get('user_email', 'Unknown')); st.cache_data.clear(); st.success("Saved!"); st.rerun()
-                        else: st.info("No pending internal.")
-                     else: st.info("No pending.")
+                        if not df_pending.empty:
+                            int_pend = df_pending[df_pending['Responsibility'].isin(['Pretor Group', 'Both'])].copy()
+                            if not int_pend.empty:
+                                int_pend['Sort'] = int_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
+                                int_pend = int_pend.sort_values(by=['Sort', 'Task Name'])
+                                ed_int = st.data_editor(int_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key=f"int_ed_{b_choice}", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
+                                if st.button("Save Internal Items", key=f"sv_int_{b_choice}"):
+                                    ed_int['Date Received'] = ed_int.apply(fill_date, axis=1)
+                                    save_checklist_batch(b_choice, ed_int, st.session_state.get('user_email', 'Unknown')); st.cache_data.clear(); st.success("Saved!"); st.rerun()
+                            else: st.info("No pending internal.")
+                        else: st.info("No pending.")
                 st.divider()
                 st.markdown("#### ✅ History")
                 if not df_completed.empty:
@@ -496,10 +446,11 @@ def main_app():
                         if doc_url:
                             update_document_url("Employees", row_id, doc_url)
                             st.success("Uploaded!")
+            
             st.divider(); st.markdown("#### ➕ Add New Employee")
             with st.form("add_s", clear_on_submit=True):
                 c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
-                e_id = st.text_input("ID Number", key="new_eid")
+                e_id = st.text_input("ID Number", key="new_eid") # Use separate logic for ID field placement
                 if st.form_submit_button("Add"):
                         if validate_sa_id(e_id):
                             add_employee(b_choice, n, s, e_id, "", 0.0, False, False, False); st.cache_data.clear(); st.success("Added"); st.rerun()
@@ -660,6 +611,11 @@ def main_app():
                 lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                 st.markdown(lnk, unsafe_allow_html=True)
             else: st.warning("Add client email in Overview.")
+
+        st.divider()
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
