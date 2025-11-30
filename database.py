@@ -64,7 +64,7 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CHECKLIST LOGIC ---
+# --- CHECKLIST LOGIC (FIXED) ---
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
         records = edited_df.to_dict('records')
@@ -77,10 +77,18 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
         return "SUCCESS"
     except Exception as e: return str(e)
 
+def get_value_insensitive(item, keys):
+    """Helper to find a value in a dictionary using multiple possible key casings."""
+    for k in keys:
+        if k in item: return item[k]
+        if k.lower() in item: return item[k.lower()]
+        if k.replace(' ', '_').lower() in item: return item[k.replace(' ', '_').lower()]
+    return None
+
 def initialize_checklist(complex_name, building_type_code):
     """
-    Automatically populates the checklist from Master Schedule.
-    building_type_code expects: 'BC' or 'HOA'.
+    Copies items from Master to Checklist.
+    Robustly handles column name mismatches (snake_case vs Title Case).
     """
     try:
         # 1. Get Master Items
@@ -92,18 +100,28 @@ def initialize_checklist(complex_name, building_type_code):
         # 2. Filter and Prepare
         new_rows = []
         for item in master_items:
-            cat = item.get("Category", "Both")
-            # Logic: Include if category is 'Both' OR matches the specific type (BC/HOA)
+            # Try finding 'Category' regardless of case
+            cat = get_value_insensitive(item, ["Category", "category"]) or "Both"
+            
+            # Filter Logic
             if cat == "Both" or cat == building_type_code:
-                new_rows.append({
-                    "Complex Name": complex_name,
-                    "Task Name": item.get("Task Name"),
-                    "Task Heading": item.get("Heading"),
-                    "Responsibility": item.get("Responsibility"),
-                    "Timing": item.get("Timing", "Immediate"), # Auto-carry timing
-                    "Received": False,
-                    "Delete": False
-                })
+                
+                # Extract values using helper to be safe against DB column naming
+                t_name = get_value_insensitive(item, ["Task Name", "task_name", "task name"])
+                t_head = get_value_insensitive(item, ["Heading", "heading", "Task Heading"])
+                t_resp = get_value_insensitive(item, ["Responsibility", "responsibility"])
+                t_time = get_value_insensitive(item, ["Timing", "timing"]) or "Immediate"
+
+                if t_name: # Only add if task name exists
+                    new_rows.append({
+                        "Complex Name": complex_name,
+                        "Task Name": t_name,
+                        "Task Heading": t_head,
+                        "Responsibility": t_resp,
+                        "Timing": t_time,
+                        "Received": False,
+                        "Delete": False
+                    })
         
         # 3. Insert Batch
         if new_rows:
