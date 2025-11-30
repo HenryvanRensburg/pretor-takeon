@@ -26,7 +26,7 @@ except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
 
-# --- AUTHENTICATION ---
+# --- AUTH ---
 def login_user(email, password):
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
@@ -40,7 +40,7 @@ def log_access(user_email):
     except Exception as e:
         print(f"Logging failed: {e}")
 
-# --- STORAGE & DOCUMENTS ---
+# --- STORAGE ---
 def upload_file_to_supabase(file_obj, file_path):
     try:
         bucket_name = "takeon_docs"
@@ -56,7 +56,7 @@ def update_document_url(table_name, row_id, url):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- GENERIC FETCH ---
+# --- FETCH ---
 def get_data(table_name):
     try:
         response = supabase.table(table_name).select("*").execute()
@@ -64,7 +64,69 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CHECKLIST LOGIC ---
+# --- CRITICAL FIX: COLUMN MAPPER ---
+def find_val(row, targets, default=""):
+    """Finds value in row dictionary by checking multiple key variations."""
+    # 1. Exact match
+    for t in targets:
+        if t in row: return row[t]
+    
+    # 2. Lowercase match
+    row_lower = {k.lower().strip(): v for k, v in row.items()}
+    for t in targets:
+        if t.lower().strip() in row_lower: return row_lower[t.lower().strip()]
+    
+    return default
+
+def initialize_checklist(complex_name, building_type_code):
+    """
+    Copies from Master to Checklist with robust column mapping.
+    """
+    try:
+        # 1. Get Master
+        master_res = supabase.table("Master").select("*").execute()
+        master_items = master_res.data
+        if not master_items: return "NO_MASTER_DATA"
+
+        new_rows = []
+        for item in master_items:
+            # ROBUST MAPPING
+            # Maps Database Columns -> To Variables
+            cat  = find_val(item, ["Category", "category", "Cat"], "Both")
+            name = find_val(item, ["Task Name", "task_name", "Task", "task"])
+            head = find_val(item, ["Heading", "heading", "Task Heading", "task_heading"])
+            resp = find_val(item, ["Responsibility", "responsibility", "Resp"])
+            time = find_val(item, ["Timing", "timing", "Time"], "Immediate")
+
+            # Filter Logic
+            b_type = building_type_code.lower().strip() # bc or hoa
+            i_cat = str(cat).lower().strip()
+            
+            is_match = False
+            if "both" in i_cat: is_match = True
+            elif b_type == "bc" and ("body" in i_cat or "bc" in i_cat): is_match = True
+            elif b_type == "hoa" and "hoa" in i_cat: is_match = True
+
+            if is_match and name:
+                new_rows.append({
+                    "Complex Name": complex_name,
+                    "Task Name": name,
+                    "Task Heading": head if head else "General", # Default to General if missing
+                    "Responsibility": resp if resp else "Pretor Group", # Default to Pretor if missing
+                    "Timing": time,
+                    "Received": False,
+                    "Delete": False
+                })
+
+        # 2. Insert
+        if new_rows:
+            supabase.table("Checklist").insert(new_rows).execute()
+            return "SUCCESS"
+        return "NO_MATCHING_ITEMS"
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
         records = edited_df.to_dict('records')
@@ -77,103 +139,7 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-def get_col_val(item, possible_keys, default=""):
-    """Helper to find a value regardless of column casing."""
-    for k in possible_keys:
-        if k in item: return item[k]
-        if k.lower() in item: return item[k.lower()]
-        if k.replace(' ', '_').lower() in item: return item[k.replace(' ', '_').lower()]
-    return default
-
-def initialize_checklist(complex_name, building_type_code):
-    """
-    Copies items from Master to Checklist.
-    Handles casing mismatches and ensures Timing/Responsibility are copied.
-    """
-    try:
-        # 1. Get Master Items
-        master_res = supabase.table("Master").select("*").execute()
-        master_items = master_res.data
-        
-        if not master_items: return "NO_MASTER_DATA"
-
-        # 2. Filter and Prepare
-        new_rows = []
-        for item in master_items:
-            # Flexible Category Matching
-            cat = get_col_val(item, ["Category", "category"], "Both")
-            
-            # Normalize inputs for comparison
-            b_type = building_type_code.lower().strip() # 'bc' or 'hoa'
-            i_cat = cat.lower().strip() # 'bc', 'body corporate', 'both'
-
-            is_match = False
-            if i_cat == "both": is_match = True
-            elif b_type == "bc" and ("body" in i_cat or "bc" in i_cat): is_match = True
-            elif b_type == "hoa" and "hoa" in i_cat: is_match = True
-            
-            if is_match:
-                # Extract fields safely using helper
-                t_name = get_col_val(item, ["Task Name", "task_name"])
-                t_head = get_col_val(item, ["Heading", "heading", "Task Heading"])
-                t_resp = get_col_val(item, ["Responsibility", "responsibility"])
-                t_time = get_col_val(item, ["Timing", "timing"], "Immediate") # Default to Immediate if missing
-
-                if t_name: 
-                    new_rows.append({
-                        "Complex Name": complex_name,
-                        "Task Name": t_name,
-                        "Task Heading": t_head,
-                        "Responsibility": t_resp,
-                        "Timing": t_time,
-                        "Received": False,
-                        "Delete": False
-                    })
-        
-        # 3. Insert Batch
-        if new_rows:
-            # Insert in chunks if too large (optional safety, but good practice)
-            supabase.table("Checklist").insert(new_rows).execute()
-            return "SUCCESS"
-        return "NO_MATCHING_ITEMS"
-    except Exception as e:
-        return str(e)
-
-# --- MASTER (FIXED INPUT) ---
-def add_master_item(task_name, category, responsibility, heading, timing):
-    try:
-        # Ensure keys match DB columns (assuming Title Case in DB creation, but usually snake_case)
-        # We send both variants implicitly by relying on Supabase to map or us sending dict
-        # Best practice: Send what matches your DB. Assuming standard Supabase defaults (snake_case)
-        # but maintaining compatibility with previous code (Title Case).
-        # I will send snake_case as that is Supabase default, but you might have created Title Case columns.
-        
-        # Try inserting with Title Case keys (standard for this app so far)
-        data = {
-            "Task Name": task_name, 
-            "Category": category, 
-            "Responsibility": responsibility, 
-            "Heading": heading, 
-            "Timing": timing
-        }
-        
-        # Fallback: Try snake_case if Title Case fails (Manual logic not needed here, just standard insert)
-        supabase.table("Master").insert(data).execute()
-    except Exception as e:
-        # If Title Case failed, try snake_case
-        try:
-            data_snake = {
-                "task_name": task_name,
-                "category": category,
-                "responsibility": responsibility,
-                "heading": heading,
-                "timing": timing
-            }
-            supabase.table("Master").insert(data_snake).execute()
-        except Exception as e2:
-            print(f"Master insert failed: {e2}")
-
-# --- PROJECTS ---
+# --- OTHER CRUD ---
 def create_new_building(data):
     try:
         existing = supabase.table("Projects").select("*").eq("Complex Name", data["Complex Name"]).execute()
@@ -183,80 +149,53 @@ def create_new_building(data):
     except Exception as e: return str(e)
 
 def update_building_details_batch(complex_name, updates):
-    try:
-        supabase.table("Projects").update(updates).eq("Complex Name", complex_name).execute()
-        return "SUCCESS"
+    try: supabase.table("Projects").update(updates).eq("Complex Name", complex_name).execute(); return "SUCCESS"
     except Exception as e: return str(e)
 
-def update_project_agent_details(complex_name, agent_name, agent_email):
-    return update_building_details_batch(complex_name, {"Agent Name": agent_name, "Agent Email": agent_email})
+def update_project_agent_details(c, n, e): return update_building_details_batch(c, {"Agent Name": n, "Agent Email": e})
+def save_broker_details(c, n, e): return update_building_details_batch(c, {"Insurance Broker Name": n, "Insurance Broker Email": e})
+def update_email_status(c, col, v=None): return update_building_details_batch(c, {col: v if v else str(datetime.now().date())})
+def finalize_project_db(c): return update_building_details_batch(c, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
 
-def save_broker_details(complex_name, broker_name, broker_email):
-    return update_building_details_batch(complex_name, {"Insurance Broker Name": broker_name, "Insurance Broker Email": broker_email})
-
-def update_email_status(complex_name, column_name, value=None):
-    date_val = value if value is not None else str(datetime.now().date())
-    return update_building_details_batch(complex_name, {column_name: date_val})
-
-def finalize_project_db(complex_name):
-    return update_building_details_batch(complex_name, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
-
-# --- EMPLOYEES ---
-def add_employee(complex_name, name, surname, id_num, position, salary, payslip_bool, contract_bool, tax_ref_bool):
-    try:
-        data = {"Complex Name": complex_name, "Name": name, "Surname": surname, "ID Number": id_num, "Position": position, "Salary": salary, "Payslip Received": payslip_bool, "Contract Received": contract_bool, "Tax Ref Received": tax_ref_bool}
-        supabase.table("Employees").insert(data).execute()
+# --- SUB-TABLES ---
+def add_employee(c, n, s, i, p, sal, pb, cb, tb):
+    try: supabase.table("Employees").insert({"Complex Name": c, "Name": n, "Surname": s, "ID Number": i, "Position": p, "Salary": sal, "Payslip Received": pb, "Contract Received": cb, "Tax Ref Received": tb}).execute()
     except Exception as e: raise e
-
-def update_employee_batch(edited_df):
+def update_employee_batch(df):
     try:
-        records = edited_df.to_dict('records')
-        for row in records:
-            if row.get('id'):
-                update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Employees").update(update_data).eq("id", row['id']).execute()
+        for r in df.to_dict('records'): 
+            if r.get('id'): supabase.table("Employees").update({k:v for k,v in r.items() if k!='id'}).eq("id", r['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- COUNCIL ---
-def add_council_account(complex_name, acc_num, service, balance):
+def add_council_account(c, a, s, b):
+    try: supabase.table("Council").insert({"Complex Name": c, "Account Number": a, "Service": s, "Balance": b}).execute()
+    except Exception as e: print(e)
+def update_council_batch(df):
     try:
-        supabase.table("Council").insert({"Complex Name": complex_name, "Account Number": acc_num, "Service": service, "Balance": balance}).execute()
-    except Exception as e: print(f"Error adding council: {e}")
-
-def update_council_batch(edited_df):
-    try:
-        records = edited_df.to_dict('records')
-        for row in records:
-            if row.get('id'):
-                update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Council").update(update_data).eq("id", row['id']).execute()
+        for r in df.to_dict('records'): 
+            if r.get('id'): supabase.table("Council").update({k:v for k,v in r.items() if k!='id'}).eq("id", r['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- ARREARS ---
-def add_arrears_item(complex_name, unit, amount, att_name, att_email, att_phone):
-    try:
-        data = {"Complex Name": complex_name, "Unit Number": unit, "Outstanding Amount": amount, "Attorney Name": att_name, "Attorney Email": att_email, "Attorney Phone": att_phone}
-        supabase.table("Arrears").insert(data).execute()
+def add_arrears_item(c, u, a, n, e, p):
+    try: supabase.table("Arrears").insert({"Complex Name": c, "Unit Number": u, "Outstanding Amount": a, "Attorney Name": n, "Attorney Email": e, "Attorney Phone": p}).execute()
     except Exception as e: raise e
-
-def update_arrears_batch(edited_df):
+def update_arrears_batch(df):
     try:
-        records = edited_df.to_dict('records')
-        for row in records:
-            if row.get('id'):
-                update_data = {k: v for k, v in row.items() if k != 'id'}
-                supabase.table("Arrears").update(update_data).eq("id", row['id']).execute()
+        for r in df.to_dict('records'): 
+            if r.get('id'): supabase.table("Arrears").update({k:v for k,v in r.items() if k!='id'}).eq("id", r['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- SETTINGS ---
-def save_global_settings(settings_dict):
+def add_master_item(n, cat, resp, head, time):
+    try: supabase.table("Master").insert({"Task Name": n, "Category": cat, "Responsibility": resp, "Heading": head, "Timing": time}).execute()
+    except Exception as e: print(e)
+
+def save_global_settings(s):
     try:
-        supabase.table("Settings").delete().neq("id", 0).execute() 
-        for dept, email in settings_dict.items():
-            supabase.table("Settings").insert({"Department": dept, "Email": email}).execute()
+        supabase.table("Settings").delete().neq("id", 0).execute()
+        for k, v in s.items(): supabase.table("Settings").insert({"Department": k, "Email": v}).execute()
     except Exception as e: print(e)
 
 # --- PLACEHOLDERS ---
