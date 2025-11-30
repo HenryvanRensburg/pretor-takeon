@@ -9,7 +9,7 @@ from database import (
     update_council_batch, update_arrears_batch, login_user, log_access,
     upload_file_to_supabase, update_document_url, initialize_checklist
 )
-from pdf_generator import generate_weekly_report_pdf
+from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
 import urllib.parse
 from datetime import datetime
 import os
@@ -59,7 +59,7 @@ class AgentRequestPDF(BasePDF):
     def add_item(self, text):
         self.set_font('Arial', '', 10); self.cell(10); self.multi_cell(0, 5, "- " + self.clean_text(text)); self.ln(1)
 
-def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date, immediate_items_list):
+def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date):
     pdf = AgentRequestPDF()
     pdf.add_page()
     pdf.set_font('Arial', 'B', 14); pdf.cell(0, 10, 'Handover Request: Managing Agent Appointment', 0, 1, 'C'); pdf.ln(5)
@@ -67,9 +67,9 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
-    # Split Dataframe
-    df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
-    df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
+    # AUTOMATIC SPLIT BASED ON DB 'Timing' COLUMN
+    df_immediate = checklist_df[checklist_df['Timing'] == 'Immediate']
+    df_month_end = checklist_df[checklist_df['Timing'] == 'Month-End']
     
     pdf.section_header("SECTION A: REQUIRED IMMEDIATELY")
     pdf.set_font('Arial', 'I', 9); pdf.multi_cell(0, 5, "Please provide the following documents at your earliest convenience."); pdf.ln(2)
@@ -132,6 +132,7 @@ def main_app():
     st.sidebar.title("👤 User Info")
     st.sidebar.info(f"Logged in as:\n{st.session_state['user_email']}")
     if st.sidebar.button("Log Out"): st.session_state.clear(); st.rerun()
+
     if os.path.exists("pretor_logo.png"): st.sidebar.image("pretor_logo.png", use_container_width=True)
     st.title("🏢 Pretor Take-On Manager")
     
@@ -182,8 +183,13 @@ def main_app():
             if st.form_submit_button("Create"):
                 if n: 
                     res = create_new_building({"Complex Name": n, "Type": t, "Date Doc Requested": str(datetime.today())})
-                    st.cache_data.clear()
-                    if res == "SUCCESS": st.success("Created!"); st.rerun()
+                    if res == "SUCCESS":
+                        # AUTO-INIT
+                        t_code = "BC" if t == "Body Corporate" else "HOA"
+                        init_res = initialize_checklist(n, t_code)
+                        st.cache_data.clear()
+                        if init_res == "SUCCESS": st.success(f"Project '{n}' created & checklist loaded!"); st.rerun()
+                        else: st.warning(f"Project created but checklist failed: {init_res}")
                     else: st.error("Exists.")
 
     elif choice == "Manage Buildings":
@@ -267,14 +273,16 @@ def main_app():
             an = c1.text_input("Agent Name", value=get_val("Agent Name"), key=f"an_{b_choice}")
             ae = c2.text_input("Agent Email", value=get_val("Agent Email"), key=f"ae_{b_choice}")
 
-            # --- HANDOVER STRATEGY ---
+            # --- HANDOVER STRATEGY (AUTO LOAD & SPLIT) ---
             st.markdown("#### 📋 Handover Strategy: Immediate Items")
             full_chk = get_data("Checklist")
             
+            # 1. Attempt to find checklist items
             agent_task_df = pd.DataFrame()
             if not full_chk.empty:
                 agent_task_df = full_chk[(full_chk['Complex Name'] == b_choice) & (full_chk['Responsibility'].isin(['Previous Agent', 'Both']))]
             
+            # 2. IF NO ITEMS, OFFER TO LOAD
             if agent_task_df.empty:
                 st.warning("⚠️ No checklist items found for this building.")
                 if st.button("📥 Load Standard Checklist from Master", key="init_chk"):
@@ -282,17 +290,17 @@ def main_app():
                     if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
                     else: st.error(f"Failed: {res}")
             else:
+                # 3. AUTO SPLIT BASED ON TIMING
                 immediate_tasks = agent_task_df[agent_task_df['Timing'] == 'Immediate']
                 
                 if st.button("Generate Request PDF & Email"):
                     if ae and not validate_email(ae): st.error("Invalid Agent Email")
                     else:
                         update_project_agent_details(b_choice, an, ae)
-                        imm_names = immediate_tasks['Task Name'].tolist()
-                        pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"), imm_names)
+                        pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"))
                         with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
                         
-                        imm_text = "\n".join([f"- {x}" for x in imm_names])
+                        imm_text = "\n".join([f"- {x}" for x in immediate_tasks['Task Name'].tolist()])
                         email_body = f"Dear {an},\n\nWe confirm our appointment for {b_choice}.\n\nPlease provide the following URGENTLY:\n{imm_text}\n\nThe remaining items are required by the 10th.\n\nRegards, Pretor"
                         link = f'<a href="mailto:{ae}?subject=Handover&body={urllib.parse.quote(email_body)}" target="_blank">📧 Draft Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
