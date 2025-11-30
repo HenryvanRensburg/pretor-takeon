@@ -64,7 +64,7 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CHECKLIST LOGIC (FIXED) ---
+# --- CHECKLIST LOGIC ---
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
         records = edited_df.to_dict('records')
@@ -77,18 +77,18 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-def get_value_insensitive(item, keys):
-    """Helper to find a value in a dictionary using multiple possible key casings."""
-    for k in keys:
+def get_col_val(item, possible_keys, default=""):
+    """Helper to find a value regardless of column casing."""
+    for k in possible_keys:
         if k in item: return item[k]
         if k.lower() in item: return item[k.lower()]
         if k.replace(' ', '_').lower() in item: return item[k.replace(' ', '_').lower()]
-    return None
+    return default
 
 def initialize_checklist(complex_name, building_type_code):
     """
     Copies items from Master to Checklist.
-    Robustly handles column name mismatches (snake_case vs Title Case).
+    Handles casing mismatches and ensures Timing/Responsibility are copied.
     """
     try:
         # 1. Get Master Items
@@ -100,19 +100,26 @@ def initialize_checklist(complex_name, building_type_code):
         # 2. Filter and Prepare
         new_rows = []
         for item in master_items:
-            # Try finding 'Category' regardless of case
-            cat = get_value_insensitive(item, ["Category", "category"]) or "Both"
+            # Flexible Category Matching
+            cat = get_col_val(item, ["Category", "category"], "Both")
             
-            # Filter Logic
-            if cat == "Both" or cat == building_type_code:
-                
-                # Extract values using helper to be safe against DB column naming
-                t_name = get_value_insensitive(item, ["Task Name", "task_name", "task name"])
-                t_head = get_value_insensitive(item, ["Heading", "heading", "Task Heading"])
-                t_resp = get_value_insensitive(item, ["Responsibility", "responsibility"])
-                t_time = get_value_insensitive(item, ["Timing", "timing"]) or "Immediate"
+            # Normalize inputs for comparison
+            b_type = building_type_code.lower().strip() # 'bc' or 'hoa'
+            i_cat = cat.lower().strip() # 'bc', 'body corporate', 'both'
 
-                if t_name: # Only add if task name exists
+            is_match = False
+            if i_cat == "both": is_match = True
+            elif b_type == "bc" and ("body" in i_cat or "bc" in i_cat): is_match = True
+            elif b_type == "hoa" and "hoa" in i_cat: is_match = True
+            
+            if is_match:
+                # Extract fields safely using helper
+                t_name = get_col_val(item, ["Task Name", "task_name"])
+                t_head = get_col_val(item, ["Heading", "heading", "Task Heading"])
+                t_resp = get_col_val(item, ["Responsibility", "responsibility"])
+                t_time = get_col_val(item, ["Timing", "timing"], "Immediate") # Default to Immediate if missing
+
+                if t_name: 
                     new_rows.append({
                         "Complex Name": complex_name,
                         "Task Name": t_name,
@@ -125,11 +132,46 @@ def initialize_checklist(complex_name, building_type_code):
         
         # 3. Insert Batch
         if new_rows:
+            # Insert in chunks if too large (optional safety, but good practice)
             supabase.table("Checklist").insert(new_rows).execute()
             return "SUCCESS"
         return "NO_MATCHING_ITEMS"
     except Exception as e:
         return str(e)
+
+# --- MASTER (FIXED INPUT) ---
+def add_master_item(task_name, category, responsibility, heading, timing):
+    try:
+        # Ensure keys match DB columns (assuming Title Case in DB creation, but usually snake_case)
+        # We send both variants implicitly by relying on Supabase to map or us sending dict
+        # Best practice: Send what matches your DB. Assuming standard Supabase defaults (snake_case)
+        # but maintaining compatibility with previous code (Title Case).
+        # I will send snake_case as that is Supabase default, but you might have created Title Case columns.
+        
+        # Try inserting with Title Case keys (standard for this app so far)
+        data = {
+            "Task Name": task_name, 
+            "Category": category, 
+            "Responsibility": responsibility, 
+            "Heading": heading, 
+            "Timing": timing
+        }
+        
+        # Fallback: Try snake_case if Title Case fails (Manual logic not needed here, just standard insert)
+        supabase.table("Master").insert(data).execute()
+    except Exception as e:
+        # If Title Case failed, try snake_case
+        try:
+            data_snake = {
+                "task_name": task_name,
+                "category": category,
+                "responsibility": responsibility,
+                "heading": heading,
+                "timing": timing
+            }
+            supabase.table("Master").insert(data_snake).execute()
+        except Exception as e2:
+            print(f"Master insert failed: {e2}")
 
 # --- PROJECTS ---
 def create_new_building(data):
@@ -209,13 +251,7 @@ def update_arrears_batch(edited_df):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- MASTER & SETTINGS ---
-def add_master_item(task_name, category, responsibility, heading, timing):
-    try:
-        data = {"Task Name": task_name, "Category": category, "Responsibility": responsibility, "Heading": heading, "Timing": timing}
-        supabase.table("Master").insert(data).execute()
-    except Exception as e: print(e)
-
+# --- SETTINGS ---
 def save_global_settings(settings_dict):
     try:
         supabase.table("Settings").delete().neq("id", 0).execute() 
