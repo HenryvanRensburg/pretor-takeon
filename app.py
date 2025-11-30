@@ -67,6 +67,7 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
+    # Split Dataframe
     df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
     df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
     
@@ -246,28 +247,62 @@ def main_app():
 
         if sub_nav == "Overview":
             st.subheader(f"Project Overview: {b_choice}")
+            
+            # --- MINI DASHBOARD ---
+            checklist = get_data("Checklist")
+            arrears = get_data("Arrears")
+            staff = get_data("Employees")
+            council = get_data("Council")
+            
+            c_checklist = checklist[checklist['Complex Name'] == b_choice] if not checklist.empty else pd.DataFrame()
+            total_tasks = len(c_checklist)
+            done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
+            prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
+            
+            # FIX: Force numeric conversion
+            c_arrears = pd.DataFrame(); debt_val = 0.0
+            if not arrears.empty and 'Complex Name' in arrears.columns:
+                c_arrears = arrears[arrears['Complex Name'] == b_choice]
+                if not c_arrears.empty and 'Outstanding Amount' in c_arrears.columns:
+                    debt_val = pd.to_numeric(c_arrears['Outstanding Amount'], errors='coerce').fillna(0).sum()
+            
+            c_staff = staff[staff['Complex Name'] == b_choice] if not staff.empty and 'Complex Name' in staff.columns else pd.DataFrame()
+            c_coun = council[council['Complex Name'] == b_choice] if not council.empty and 'Complex Name' in council.columns else pd.DataFrame()
+            
+            col_d1, col_d2, col_d3, col_d4 = st.columns(4)
+            col_d1.metric("Checklist Progress", f"{int(prog_val*100)}%"); col_d1.progress(prog_val)
+            col_d2.metric("Total Arrears", f"R {debt_val:,.2f}")
+            col_d3.metric("Staff Loaded", len(c_staff))
+            col_d4.metric("Council Accounts", len(c_coun))
+            st.divider()
+
+            # --- FULL FORM ---
             with st.form("project_overview_form"):
                 st.caption("Fields with existing data are locked 🔒.")
                 def smart_input(label, col_name, col_obj=st):
                     curr_val = str(p_row.get(col_name, ''))
                     has_data = bool(curr_val and curr_val.lower() not in ["none", "nan", ""])
                     return col_obj.text_input(label, value=curr_val if has_data else "", disabled=has_data, key=f"ov_{col_name}", placeholder="Enter detail...")
+                
                 st.markdown("#### 📍 General & Address")
                 c1, c2, c3 = st.columns(3)
                 with c1: u_code = smart_input("Building Code", "Building Code", c1); u_type = smart_input("Type (BC/HOA)", "Type", c1)
                 with c2: u_units = smart_input("No of Units", "No of Units", c2); u_ss = smart_input("SS Number", "SS Number", c2)
                 with c3: u_erf = smart_input("Erf Number", "Erf Number", c3); u_csos = smart_input("CSOS Number", "CSOS Number", c3)
                 st.markdown(""); u_addr = smart_input("Physical Address", "Physical Address", st)
+
                 st.markdown("#### 💰 Financial & Compliance")
                 c4, c5, c6 = st.columns(3)
                 with c4: u_ye = smart_input("Year End", "Year End", c4); u_fees = smart_input("Mgmt Fees", "Mgmt Fees", c4); u_exp = smart_input("Expense Code", "Expense Code", c4)
                 with c5: u_vat = smart_input("VAT Number", "VAT Number", c5); u_tax = smart_input("Tax Number", "Tax Number", c5); u_tod = smart_input("Take On Date", "Take On Date", c5)
                 with c6: u_aud = smart_input("Auditor", "Auditor", c6); u_last_aud = smart_input("Last Audit", "Last Audit", c6)
+
                 st.markdown("#### 👥 The Team")
                 c7, c8, c9 = st.columns(3)
                 with c7: u_pm = smart_input("Portfolio Manager", "Assigned Manager", c7); u_pm_e = smart_input("PM Email", "Manager Email", c7); u_client_e = smart_input("Client Email", "Client Email", c7)
                 with c8: u_pa = smart_input("Portfolio Assistant", "Portfolio Assistant", c8); u_pa_e = smart_input("PA Email", "Portfolio Assistant Email", c8); u_tom = smart_input("Take-On Manager", "TakeOn Name", c8)
                 with c9: u_bk = smart_input("Bookkeeper", "Bookkeeper", c9); u_bk_e = smart_input("Bookkeeper Email", "Bookkeeper Email", c9)
+                
                 st.markdown("---")
                 if st.form_submit_button("💾 Save Missing Details"):
                     updates = {"Building Code": u_code, "Type": u_type, "No of Units": u_units, "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos, "Physical Address": u_addr, "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp, "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod, "Auditor": u_aud, "Last Audit": u_last_aud, "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e, "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom, "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e}
@@ -278,26 +313,24 @@ def main_app():
             an = c1.text_input("Agent Name", value=get_val("Agent Name"), key=f"an_{b_choice}")
             ae = c2.text_input("Agent Email", value=get_val("Agent Email"), key=f"ae_{b_choice}")
 
+            # --- HANDOVER STRATEGY ---
             st.markdown("#### 📋 Handover Strategy: Immediate Items")
             full_chk = get_data("Checklist")
             
-            # --- FIXED LOGIC ---
+            # 1. Attempt to find checklist items
             agent_task_df = pd.DataFrame()
             if not full_chk.empty:
                 agent_task_df = full_chk[(full_chk['Complex Name'] == b_choice) & (full_chk['Responsibility'].isin(['Previous Agent', 'Both']))]
             
+            # 2. IF NO ITEMS, OFFER TO LOAD
             if agent_task_df.empty:
-                # Check if Master exists
-                master_chk = get_data("Master")
-                if master_chk.empty:
-                    st.error("🚨 Master Checklist is empty! Go to 'Master Schedule' and add items.")
-                else:
-                    st.warning("⚠️ No checklist items found for this building.")
-                    if st.button("📥 Load Standard Checklist from Master", key="init_chk"):
-                        res = initialize_checklist(b_choice)
-                        if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
-                        else: st.error(f"Failed: {res}")
+                st.warning("⚠️ No checklist items found for this building.")
+                if st.button("📥 Load Standard Checklist from Master", key="init_chk"):
+                    res = initialize_checklist(b_choice)
+                    if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
+                    else: st.error(f"Failed: {res}")
             else:
+                # 3. SHOW SELECTION
                 month_end_cats = ['Financial', 'Employee', 'City Council']
                 default_immediate = agent_task_df[~agent_task_df['Task Heading'].isin(month_end_cats)]['Task Name'].tolist()
                 all_options = agent_task_df['Task Name'].tolist()
@@ -338,8 +371,24 @@ def main_app():
                         if not ag_pend.empty:
                             ag_pend['Sort'] = ag_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                             ag_pend = ag_pend.sort_values(by=['Sort', 'Task Name'])
-                            edited_ag = st.data_editor(ag_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key="ag_ed", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
-                            if st.button("Save Agent Items"):
+                            
+                            # --- DOC UPLOAD ---
+                            st.markdown("##### 📎 Attach Document (Optional)")
+                            item_names = ag_pend['Task Name'].tolist()
+                            selected_item = st.selectbox("Select checklist item to attach file", ["None"] + item_names, key=f"sel_up_{b_choice}")
+                            if selected_item != "None":
+                                uploaded_file = st.file_uploader(f"Upload Document for: {selected_item}", key=f"ul_chk_{b_choice}")
+                                if uploaded_file:
+                                    if st.button("Upload File", key=f"btn_up_{b_choice}"):
+                                        row_id = ag_pend[ag_pend['Task Name'] == selected_item].iloc[0]['id']
+                                        path = f"{b_choice}/Checklist/{selected_item}_{uploaded_file.name}"
+                                        doc_url = upload_file_to_supabase(uploaded_file, path)
+                                        if doc_url:
+                                            update_document_url("Checklist", row_id, doc_url)
+                                            st.success(f"Uploaded! Please tick '{selected_item}' below and Save.")
+
+                            edited_ag = st.data_editor(ag_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key=f"ag_ed_{b_choice}", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
+                            if st.button("Save Agent Items", key=f"sv_ag_{b_choice}"):
                                 edited_ag['Date Received'] = edited_ag.apply(fill_date, axis=1)
                                 save_checklist_batch(b_choice, edited_ag, st.session_state.get('user_email', 'Unknown')); st.cache_data.clear(); st.success("Saved!"); st.rerun()
                             st.divider()
@@ -351,58 +400,58 @@ def main_app():
                                 st.markdown(f'<a href="mailto:{agent_email}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Follow Up Email</a>', unsafe_allow_html=True)
                         else: st.info("No pending items.")
                     else:
-                            ag_comp = c_items[(c_items['Responsibility'].isin(['Previous Agent', 'Both'])) & (c_items['Received'] == True)]
-                            if not ag_comp.empty:
-                                try: last_d = pd.to_datetime(ag_comp['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
-                                except: last_d = "Unknown"
-                                st.success(f"✅ All items received! Last: **{last_d}**")
-                                
-                                st.divider()
-                                st.markdown("#### 🚀 Take-On Complete: Notify Client")
-                                comp_date = get_val("Client Completion Email Sent Date")
-                                rep_date = get_val("Client Report Generated Date")
-                                
-                                st.markdown("**Step 1: Generate Handover Report**")
-                                if rep_date and rep_date != "None":
-                                    st.success(f"✅ Generated: {rep_date}")
-                                    emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
-                                    pdf_f = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
-                                    with open(pdf_f, "rb") as f: st.download_button("⬇️ Download Copy", f, file_name=pdf_f, mime="application/pdf")
-                                    if st.button("Unlock (Regenerate Report)", key="unlock_rep"): update_email_status(b_choice, "Client Report Generated Date", ""); st.cache_data.clear(); st.rerun()
-                                else:
-                                    if st.button("📄 Generate & Lock Report", key="gen_pdf_comp"):
-                                        emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
-                                        create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
-                                        update_email_status(b_choice, "Client Report Generated Date")
-                                        st.cache_data.clear(); st.rerun()
+                         ag_comp = c_items[(c_items['Responsibility'].isin(['Previous Agent', 'Both'])) & (c_items['Received'] == True)]
+                         if not ag_comp.empty:
+                             try: last_d = pd.to_datetime(ag_comp['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
+                             except: last_d = "Unknown"
+                             st.success(f"✅ All items received! Last: **{last_d}**")
+                             
+                             st.divider()
+                             st.markdown("#### 🚀 Take-On Complete: Notify Client")
+                             comp_date = get_val("Client Completion Email Sent Date")
+                             rep_date = get_val("Client Report Generated Date")
+                             
+                             st.markdown("**Step 1: Generate Handover Report**")
+                             if rep_date and rep_date != "None":
+                                 st.success(f"✅ Generated: {rep_date}")
+                                 emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
+                                 pdf_f = create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
+                                 with open(pdf_f, "rb") as f: st.download_button("⬇️ Download Copy", f, file_name=pdf_f, mime="application/pdf", key=f"dl_rep_{b_choice}")
+                                 if st.button("Unlock (Regenerate Report)", key=f"unlock_rep_{b_choice}"): update_email_status(b_choice, "Client Report Generated Date", ""); st.cache_data.clear(); st.rerun()
+                             else:
+                                 if st.button("📄 Generate & Lock Report", key=f"gen_pdf_comp_{b_choice}"):
+                                     emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
+                                     create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
+                                     update_email_status(b_choice, "Client Report Generated Date")
+                                     st.cache_data.clear(); st.rerun()
 
-                                st.markdown("**Step 2: Email Client**")
-                                if comp_date and comp_date != "None":
-                                    st.success(f"✅ Sent: {comp_date}")
-                                    if st.button("Unlock Email", key="unlock_comp"): update_email_status(b_choice, "Client Completion Email Sent Date", ""); st.cache_data.clear(); st.rerun()
-                                else:
-                                    c_mail = get_val("Client Email")
-                                    if c_mail and c_mail != "None":
-                                        bod = "Dear Client,\n\nTake-on complete.\n\nRegards, Pretor"
-                                        sub = urllib.parse.quote(f"Completed: {b_choice}")
-                                        lnk = f'<a href="mailto:{c_mail}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#09ab3b;color:white;padding:10px;border-radius:5px;text-decoration:none;">🚀 Draft Email</a>'
-                                        st.markdown(lnk, unsafe_allow_html=True)
-                                        st.write("")
-                                        if st.button("Mark as Sent", key="mark_comp"): update_email_status(b_choice, "Client Completion Email Sent Date"); st.cache_data.clear(); st.rerun()
-                                    else: st.warning("No Client Email.")
-                            else: st.info("No agent items.")
+                             st.markdown("**Step 2: Email Client**")
+                             if comp_date and comp_date != "None":
+                                 st.success(f"✅ Sent: {comp_date}")
+                                 if st.button("Unlock Email", key=f"unlock_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date", ""); st.cache_data.clear(); st.rerun()
+                             else:
+                                 c_mail = get_val("Client Email")
+                                 if c_mail and c_mail != "None":
+                                     bod = "Dear Client,\n\nTake-on complete.\n\nRegards, Pretor"
+                                     sub = urllib.parse.quote(f"Completed: {b_choice}")
+                                     lnk = f'<a href="mailto:{c_mail}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#09ab3b;color:white;padding:10px;border-radius:5px;text-decoration:none;">🚀 Draft Email</a>'
+                                     st.markdown(lnk, unsafe_allow_html=True)
+                                     st.write("")
+                                     if st.button("Mark as Sent", key=f"mark_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date"); st.cache_data.clear(); st.rerun()
+                                 else: st.warning("No Client Email.")
+                         else: st.info("No agent items.")
                 with t2:
-                        if not df_pending.empty:
+                     if not df_pending.empty:
                         int_pend = df_pending[df_pending['Responsibility'].isin(['Pretor Group', 'Both'])].copy()
                         if not int_pend.empty:
                             int_pend['Sort'] = int_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                             int_pend = int_pend.sort_values(by=['Sort', 'Task Name'])
-                            ed_int = st.data_editor(int_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key="int_ed", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
-                            if st.button("Save Internal Items"):
+                            ed_int = st.data_editor(int_pend[['id', 'Task Heading', 'Task Name', 'Received', 'Date Received', 'Notes', 'Delete']], hide_index=True, height=400, key=f"int_ed_{b_choice}", column_config={"id": None, "Task Heading": st.column_config.TextColumn(disabled=True), "Task Name": st.column_config.TextColumn(disabled=True)})
+                            if st.button("Save Internal Items", key=f"sv_int_{b_choice}"):
                                 ed_int['Date Received'] = ed_int.apply(fill_date, axis=1)
                                 save_checklist_batch(b_choice, ed_int, st.session_state.get('user_email', 'Unknown')); st.cache_data.clear(); st.success("Saved!"); st.rerun()
                         else: st.info("No pending internal.")
-                        else: st.info("No pending.")
+                     else: st.info("No pending.")
                 st.divider()
                 st.markdown("#### ✅ History")
                 if not df_completed.empty:
@@ -419,7 +468,7 @@ def main_app():
             locked = (uif_val and uif_val != 'None') or (paye_val and paye_val != 'None')
             st.markdown("#### 🏢 Project Statutory Numbers")
             if locked:
-                c1, c2, c3 = st.columns(3); c1.text_input("UIF", uif_val, disabled=True); c2.text_input("PAYE", paye_val, disabled=True); c3.text_input("COIDA", coida_val, disabled=True)
+                c1, c2, c3 = st.columns(3); c1.text_input("UIF", uif_val, disabled=True, key=f"l_u_{b_choice}"); c2.text_input("PAYE", paye_val, disabled=True, key=f"l_p_{b_choice}"); c3.text_input("COIDA", coida_val, disabled=True, key=f"l_c_{b_choice}")
             else:
                 with st.form("stat"):
                     c1,c2,c3=st.columns(3); u=c1.text_input("UIF"); p=c2.text_input("PAYE"); c=c3.text_input("COIDA")
@@ -431,19 +480,22 @@ def main_app():
                 curr_s = all_s[all_s['Complex Name'] == b_choice].copy()
                 if not curr_s.empty:
                     cols = ['id', 'Name', 'Surname', 'Position', 'Salary']
-                    ed_s = st.data_editor(curr_s[[c for c in cols if c in curr_s.columns]], hide_index=True, key="stf_ed", column_config={"id": None, "Salary": st.column_config.NumberColumn(format="R %.2f")})
-                    if st.button("Save Staff"): update_employee_batch(ed_s); st.cache_data.clear(); st.success("Updated!"); st.rerun()
+                    ed_s = st.data_editor(curr_s[[c for c in cols if c in curr_s.columns]], hide_index=True, key=f"stf_ed_{b_choice}", column_config={"id": None, "Salary": st.column_config.NumberColumn(format="R %.2f")})
+                    if st.button("Save Staff", key=f"sv_s_{b_choice}"): update_employee_batch(ed_s); st.cache_data.clear(); st.success("Updated!"); st.rerun()
                 else: st.info("No staff.")
+                
                 st.markdown("##### 📎 Upload Contract/ID")
                 s_list = curr_s['Name'].tolist() if not curr_s.empty else []
-                sel_s = st.selectbox("Select Employee", ["None"] + s_list)
+                sel_s = st.selectbox("Select Employee", ["None"] + s_list, key=f"sel_s_{b_choice}")
                 if sel_s != "None":
-                    up_s = st.file_uploader("Upload Document", key="up_stf")
-                    if up_s and st.button("Upload to Staff"):
+                    up_s = st.file_uploader("Upload Document", key=f"up_stf_{b_choice}")
+                    if up_s and st.button("Upload to Staff", key=f"btn_up_stf_{b_choice}"):
                         row_id = curr_s[curr_s['Name'] == sel_s].iloc[0]['id']
                         path = f"{b_choice}/Staff/{sel_s}_{up_s.name}"
                         doc_url = upload_file_to_supabase(up_s, path)
-                        if doc_url: update_document_url("Employees", row_id, doc_url); st.success("Uploaded!")
+                        if doc_url:
+                            update_document_url("Employees", row_id, doc_url)
+                            st.success("Uploaded!")
             st.divider(); st.markdown("#### ➕ Add New Employee")
             with st.form("add_s", clear_on_submit=True):
                 c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
@@ -462,17 +514,20 @@ def main_app():
             if not ad.empty and 'Complex Name' in ad.columns:
                 curr_a = ad[ad['Complex Name'] == b_choice].copy()
                 if not curr_a.empty:
-                        ed_a = st.data_editor(curr_a[['id', 'Unit Number', 'Outstanding Amount']], hide_index=True, key="arr_ed", column_config={"id": None, "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f")})
-                        if st.button("Save Arrears"): update_arrears_batch(ed_a); st.cache_data.clear(); st.success("Updated"); st.rerun()
+                        ed_a = st.data_editor(curr_a[['id', 'Unit Number', 'Outstanding Amount']], hide_index=True, key=f"arr_ed_{b_choice}", column_config={"id": None, "Outstanding Amount": st.column_config.NumberColumn(format="R %.2f")})
+                        if st.button("Save Arrears", key=f"sv_arr_{b_choice}"): update_arrears_batch(ed_a); st.cache_data.clear(); st.success("Updated"); st.rerun()
+                        
                         st.markdown("##### 📎 Upload Legal Handover")
-                        u_list = curr_a['Unit Number'].astype(str).tolist(); sel_u = st.selectbox("Select Unit", ["None"] + u_list)
+                        u_list = curr_a['Unit Number'].astype(str).tolist()
+                        sel_u = st.selectbox("Select Unit", ["None"] + u_list, key=f"sel_arr_{b_choice}")
                         if sel_u != "None":
-                            up_a = st.file_uploader("Upload File", key="up_arr")
-                            if up_a and st.button("Upload to Arrears"):
+                            up_a = st.file_uploader("Upload File", key=f"up_arr_{b_choice}")
+                            if up_a and st.button("Upload to Arrears", key=f"btn_up_arr_{b_choice}"):
                                 row_id = curr_a[curr_a['Unit Number'].astype(str) == sel_u].iloc[0]['id']
                                 path = f"{b_choice}/Arrears/{sel_u}_{up_a.name}"
                                 doc_url = upload_file_to_supabase(up_a, path)
                                 if doc_url: update_document_url("Arrears", row_id, doc_url); st.success("Uploaded!")
+
                 else: st.info("No arrears.")
             with st.form("add_a", clear_on_submit=True):
                 u=st.text_input("Unit"); a=st.number_input("Amount"); m=st.text_input("Attorney Email"); p=st.text_input("Attorney Phone")
@@ -496,13 +551,15 @@ def main_app():
             if not cd.empty and 'Complex Name' in cd.columns:
                 curr_c = cd[cd['Complex Name'] == b_choice].copy()
                 if not curr_c.empty:
-                    ed_c = st.data_editor(curr_c[['id', 'Account Number', 'Service']], hide_index=True, key="cou_ed", column_config={"id": None, "Balance": st.column_config.NumberColumn(format="R %.2f")})
-                    if st.button("Save Council"): update_council_batch(ed_c); st.cache_data.clear(); st.success("Updated"); st.rerun()
+                    ed_c = st.data_editor(curr_c[['id', 'Account Number', 'Service']], hide_index=True, key=f"cou_ed_{b_choice}", column_config={"id": None, "Balance": st.column_config.NumberColumn(format="R %.2f")})
+                    if st.button("Save Council", key=f"sv_cou_{b_choice}"): update_council_batch(ed_c); st.cache_data.clear(); st.success("Updated"); st.rerun()
+                    
                     st.markdown("##### 📎 Upload Account Statement")
-                    ac_list = curr_c['Account Number'].astype(str).tolist(); sel_ac = st.selectbox("Select Account", ["None"] + ac_list)
+                    ac_list = curr_c['Account Number'].astype(str).tolist()
+                    sel_ac = st.selectbox("Select Account", ["None"] + ac_list, key=f"sel_cou_{b_choice}")
                     if sel_ac != "None":
-                        up_c = st.file_uploader("Upload File", key="up_cou")
-                        if up_c and st.button("Upload to Council"):
+                        up_c = st.file_uploader("Upload File", key=f"up_cou_{b_choice}")
+                        if up_c and st.button("Upload to Council", key=f"btn_up_cou_{b_choice}"):
                             row_id = curr_c[curr_c['Account Number'].astype(str) == sel_ac].iloc[0]['id']
                             path = f"{b_choice}/Council/{sel_ac}_{up_c.name}"
                             doc_url = upload_file_to_supabase(up_c, path)
@@ -515,23 +572,27 @@ def main_app():
         elif sub_nav == "Department Handovers":
             st.markdown("### Department Handovers")
             settings = get_data("Settings"); s_dict = dict(zip(settings["Department"], settings["Email"])) if not settings.empty else {}
+
             council_df = get_data("Council")
             if council_df.empty: council_df = get_data("council")
+
             st.markdown("#### SARS")
             sars_sent = get_val("SARS Sent Date")
             if sars_sent and sars_sent != "None":
                 st.success(f"✅ Sent: {sars_sent}")
-                if st.button("Reset SARS"): update_email_status(b_choice, "SARS Sent Date", ""); st.cache_data.clear(); st.rerun()
+                if st.button("Reset SARS", key=f"rst_sars_{b_choice}"): update_email_status(b_choice, "SARS Sent Date", ""); st.cache_data.clear(); st.rerun()
             else:
-                if st.button("Mark SARS Sent"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
+                if st.button("Mark SARS Sent", key=f"btn_sars_{b_choice}"): update_email_status(b_choice, "SARS Sent Date"); st.cache_data.clear(); st.rerun()
             
             st.divider(); st.markdown("#### Council")
             c_sent = get_val("Council Email Sent Date")
+            
             c_docs = " (Files Attached)" if not council_df.empty else ""
             c_body = f"Dear Council Team,\n\nPlease find attached account details{c_docs}.\n\nPath: Y:\\HenryJ\\NEW BUSINESS & DEVELOPMENTS\\{b_choice}\\council\n\nPlease load onto Pretor Portal.\n\nRegards."
+            
             if c_sent and c_sent != "None":
                 st.success(f"✅ Sent: {c_sent}")
-                if st.button("Reset Council"): update_email_status(b_choice, "Council Email Sent Date", ""); st.cache_data.clear(); st.rerun()
+                if st.button("Reset Council", key=f"rst_cou_{b_choice}"): update_email_status(b_choice, "Council Email Sent Date", ""); st.cache_data.clear(); st.rerun()
             else:
                 c1, c2 = st.columns([1,1])
                 with c1:
@@ -540,7 +601,7 @@ def main_app():
                         lnk = f'<a href="mailto:{muni_em}?subject=Handover: {b_choice}&body={urllib.parse.quote(c_body)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Draft Email</a>'
                         st.markdown(lnk, unsafe_allow_html=True)
                 with c2:
-                    if st.button("Mark Council Sent"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
+                    if st.button("Mark Council Sent", key=f"btn_cou_{b_choice}"): update_email_status(b_choice, "Council Email Sent Date"); st.cache_data.clear(); st.rerun()
 
             st.divider()
             def render_handover(name, col, email_key, custom_body=None):
@@ -564,10 +625,10 @@ def main_app():
             st.markdown("#### Insurance")
             with st.expander("Edit Broker"):
                     with st.form("eb"): 
-                    bn=st.text_input("Name", get_val("Insurance Broker Name")); be=st.text_input("Email", get_val("Insurance Broker Email"))
-                    if st.form_submit_button("Save"): 
-                        if be and not validate_email(be): st.error("Invalid Email")
-                        else: save_broker_details(b_choice, bn, be); st.cache_data.clear(); st.rerun()
+                        bn=st.text_input("Name", get_val("Insurance Broker Name")); be=st.text_input("Email", get_val("Insurance Broker Email"))
+                        if st.form_submit_button("Save"): 
+                            if be and not validate_email(be): st.error("Invalid Email")
+                            else: save_broker_details(b_choice, bn, be); st.cache_data.clear(); st.rerun()
 
             st.markdown("**External Broker**")
             b_sent = get_val("Broker Email Sent Date")
@@ -599,11 +660,6 @@ def main_app():
                 lnk = f'<a href="mailto:{client_email}?subject=Update&body=Update" target="_blank">Draft Update Email</a>'
                 st.markdown(lnk, unsafe_allow_html=True)
             else: st.warning("Add client email in Overview.")
-
-        st.divider()
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Finalize Project"): finalize_project_db(b_choice); st.cache_data.clear(); st.balloons()
 
 if __name__ == "__main__":
     if 'user' not in st.session_state: login_screen()
