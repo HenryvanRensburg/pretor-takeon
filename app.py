@@ -9,7 +9,7 @@ from database import (
     update_council_batch, update_arrears_batch, login_user, log_access,
     upload_file_to_supabase, update_document_url, initialize_checklist
 )
-from pdf_generator import generate_appointment_pdf, generate_report_pdf, generate_weekly_report_pdf
+# Removed external pdf_generator import to keep logic self-contained
 import urllib.parse
 from datetime import datetime
 import os
@@ -59,7 +59,7 @@ class AgentRequestPDF(BasePDF):
     def add_item(self, text):
         self.set_font('Arial', '', 10); self.cell(10); self.multi_cell(0, 5, "- " + self.clean_text(text)); self.ln(1)
 
-def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date):
+def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date, immediate_items_list):
     pdf = AgentRequestPDF()
     pdf.add_page()
     pdf.set_font('Arial', 'B', 14); pdf.cell(0, 10, 'Handover Request: Managing Agent Appointment', 0, 1, 'C'); pdf.ln(5)
@@ -67,9 +67,9 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
-    # AUTOMATIC SPLIT BASED ON DB 'Timing' COLUMN
-    df_immediate = checklist_df[checklist_df['Timing'] == 'Immediate']
-    df_month_end = checklist_df[checklist_df['Timing'] == 'Month-End']
+    # Split Dataframe
+    df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
+    df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
     
     pdf.section_header("SECTION A: REQUIRED IMMEDIATELY")
     pdf.set_font('Arial', 'I', 9); pdf.multi_cell(0, 5, "Please provide the following documents at your earliest convenience."); pdf.ln(2)
@@ -105,17 +105,64 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
     pdf.cell(80); pdf.cell(30, 10, 'Comprehensive Handover Report', 0, 0, 'C'); pdf.ln(20)
     
     pdf.section_title(f"1. Overview: {complex_name}"); pdf.ln(2)
-    fields = {"Building Code":"Building Code","Type":"Type","Units":"No of Units","Year End":"Year End","Address":"Physical Address","Manager":"Assigned Manager","Email":"Manager Email"}
-    for k,v in fields.items(): pdf.entry_row(k, p_row.get(v,''))
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 6, "General", 0, 1)
+    for k in ["Building Code", "Type", "No of Units", "SS Number", "Erf Number", "CSOS Number"]:
+        v = p_row.get(k, ''); pdf.entry_row(k+":", v) if v and v != 'None' else None
+    pdf.ln(2); pdf.set_font('Arial', 'B', 10); pdf.cell(0, 6, "Financial", 0, 1)
+    for k in ["Year End", "Mgmt Fees", "VAT Number", "Tax Number", "Auditor"]:
+        v = p_row.get(k, ''); pdf.entry_row(k+":", v) if v and v != 'None' else None
+    pdf.ln(2); pdf.set_font('Arial', 'B', 10); pdf.cell(0, 6, "Team", 0, 1)
+    for k, v_col in {"Manager": "Assigned Manager", "PM Email": "Manager Email", "Client": "Client Email"}.items():
+        v = p_row.get(v_col, ''); pdf.entry_row(k+":", v) if v and v != 'None' else None
     pdf.ln(5)
+
+    pdf.section_title("2. Items Received from Previous Agent"); pdf.ln(2)
+    if not checklist_df.empty:
+        agent_items = checklist_df[(checklist_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (checklist_df['Received'].astype(str).str.lower() == 'true')]
+        if not agent_items.empty:
+            pdf.set_font("Arial", "", 9)
+            for _, row in agent_items.iterrows():
+                pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(row['Task Name'])} (Rec: {row.get('Date Received','')})")
+        else: pdf.cell(0, 6, "None received yet.", 0, 1)
+    else: pdf.cell(0, 6, "No data.", 0, 1)
+    pdf.ln(4)
+
+    pdf.section_title("3. Internal Actions Completed"); pdf.ln(2)
+    if not checklist_df.empty:
+        pretor_items = checklist_df[(checklist_df['Responsibility'].isin(['Pretor Group', 'Both'])) & (checklist_df['Received'].astype(str).str.lower() == 'true')]
+        if not pretor_items.empty:
+            pdf.set_font("Arial", "", 9)
+            for _, row in pretor_items.iterrows():
+                pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(row['Task Name'])}")
+        else: pdf.cell(0, 6, "None completed yet.", 0, 1)
+    else: pdf.cell(0, 6, "No data.", 0, 1)
+    pdf.ln(4)
+
+    pdf.section_title("4. Staff Loaded"); pdf.ln(2)
+    if not emp_df.empty:
+        c_emp = emp_df[emp_df['Complex Name'] == complex_name]
+        if not c_emp.empty:
+            pdf.set_font("Arial", "B", 8); pdf.cell(60, 6, "Name", 1); pdf.cell(50, 6, "Position", 1); pdf.cell(30, 6, "Salary", 1); pdf.ln()
+            pdf.set_font("Arial", "", 8)
+            for _, row in c_emp.iterrows():
+                pdf.cell(60, 6, pdf.clean_text(f"{row.get('Name','')} {row.get('Surname','')}"), 1)
+                pdf.cell(50, 6, pdf.clean_text(str(row.get('Position',''))), 1)
+                pdf.cell(30, 6, f"R{row.get('Salary',0)}", 1); pdf.ln()
+        else: pdf.cell(0, 6, "No staff.", 0, 1)
+    else: pdf.cell(0, 6, "No data.", 0, 1)
+    pdf.ln(4)
+
+    pdf.section_title("5. Department Handovers"); pdf.ln(2)
+    pdf.set_font("Arial", "", 9)
+    handovers = { "Wages": "Wages Sent Date", "Council": "Council Email Sent Date", "Debt": "Debt Collection Sent Date", "SARS": "SARS Sent Date" }
+    for k, v in handovers.items():
+        d = p_row.get(v)
+        st_txt = f"Done ({d})" if d and d != "None" else "Pending"
+        pdf.cell(40, 6, k+":", 0); pdf.cell(0, 6, st_txt, 0, 1)
     
-    pdf.section_title("2. Pending Items"); pdf.ln(2)
-    pending = checklist_df[(checklist_df['Received'].astype(str).str.lower() != 'true') & (checklist_df['Delete'] != True)]
-    if not pending.empty:
-        for _, r in pending.iterrows(): pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(r['Task Name'])} ({r.get('Timing','Unknown')})")
-    else: pdf.cell(0, 6, "No pending items.", 0, 1)
-    
-    temp_dir = tempfile.gettempdir(); filename = os.path.join(temp_dir, f"Report_{complex_name}.pdf"); pdf.output(filename); return filename
+    temp_dir = tempfile.gettempdir()
+    filename = os.path.join(temp_dir, f"Handover_Report_{complex_name}.pdf")
+    pdf.output(filename); return filename
 
 # --- LOGIN ---
 def login_screen():
@@ -174,16 +221,41 @@ def main_app():
             w = st.text_input("Wages", s_dict.get("Wages","")); s = st.text_input("SARS", s_dict.get("SARS","")); m = st.text_input("Municipal", s_dict.get("Municipal",""))
             if st.form_submit_button("Save"): save_global_settings({"Wages": w, "SARS": s, "Municipal": m}); st.cache_data.clear(); st.success("Saved"); st.rerun()
 
+    # --- NEW BUILDING (UPDATED LAYOUT) ---
     elif choice == "New Building":
-        st.subheader("New Building")
-        with st.form("new"):
-            n = st.text_input("Name"); t = st.selectbox("Type", ["Body Corporate", "HOA"])
-            if st.form_submit_button("Create"):
-                if n: 
-                    res = create_new_building({"Complex Name": n, "Type": t, "Date Doc Requested": str(datetime.today())})
+        st.subheader("Onboard New Complex")
+        with st.form("new_b"):
+            st.markdown("#### Basic Details")
+            c1, c2 = st.columns(2)
+            with c1: name = st.text_input("Complex Name")
+            with c2: b_type = st.selectbox("Type", ["Body Corporate", "HOA"])
+            
+            st.markdown("#### Dates & Units")
+            c3, c4 = st.columns(2)
+            with c3: tod = st.date_input("Take On Date", datetime.today())
+            with c4: units = st.number_input("No of Units", min_value=1, value=1)
+            
+            st.markdown("#### Management Team")
+            c5, c6 = st.columns(2)
+            with c5: tom = st.text_input("Take-On Manager", value="Henry Janse van Rensburg")
+            with c6: pm = st.text_input("Portfolio Manager")
+            
+            st.markdown("#### Financials")
+            c7, c8, c9 = st.columns(3)
+            with c7: ye = st.text_input("Year End")
+            with c8: fees = st.text_input("Management Fees")
+            with c9: bcode = st.text_input("Building Code")
+            
+            st.divider()
+            
+            if st.form_submit_button("Create Project"):
+                if name:
+                    data = {"Complex Name": name, "Type": b_type, "Take On Date": str(tod), "No of Units": units, "TakeOn Name": tom, "Assigned Manager": pm, "Year End": ye, "Mgmt Fees": fees, "Building Code": bcode, "Date Doc Requested": str(datetime.today())}
+                    res = create_new_building(data)
                     st.cache_data.clear()
-                    if res == "SUCCESS": st.success("Created!"); st.rerun()
-                    else: st.error("Exists.")
+                    if res == "SUCCESS": st.success(f"Project '{name}' created!"); st.rerun()
+                    elif res == "EXISTS": st.error("A project with this name already exists.")
+                else: st.error("Please enter a Complex Name.")
 
     elif choice == "Manage Buildings":
         projs = get_data("Projects")
@@ -291,10 +363,11 @@ def main_app():
                     if ae and not validate_email(ae): st.error("Invalid Agent Email")
                     else:
                         update_project_agent_details(b_choice, an, ae)
-                        pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"))
+                        imm_names = immediate_tasks['Task Name'].tolist()
+                        pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"), imm_names)
                         with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
                         
-                        imm_text = "\n".join([f"- {x}" for x in immediate_tasks['Task Name'].tolist()])
+                        imm_text = "\n".join([f"- {x}" for x in imm_names])
                         email_body = f"Dear {an},\n\nWe confirm our appointment for {b_choice}.\n\nPlease provide the following URGENTLY:\n{imm_text}\n\nThe remaining items are required by the 10th.\n\nRegards, Pretor"
                         link = f'<a href="mailto:{ae}?subject=Handover&body={urllib.parse.quote(email_body)}" target="_blank">📧 Draft Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
@@ -450,7 +523,7 @@ def main_app():
             st.divider(); st.markdown("#### ➕ Add New Employee")
             with st.form("add_s", clear_on_submit=True):
                 c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
-                e_id = st.text_input("ID Number", key="new_eid") # Use separate logic for ID field placement
+                e_id = st.text_input("ID Number", key="new_eid")
                 if st.form_submit_button("Add"):
                         if validate_sa_id(e_id):
                             add_employee(b_choice, n, s, e_id, "", 0.0, False, False, False); st.cache_data.clear(); st.success("Added"); st.rerun()
