@@ -17,7 +17,7 @@ except (FileNotFoundError, KeyError):
     key = os.environ.get("SUPABASE_KEY")
 
 if not url or not key:
-    st.error("🚨 Supabase Credentials Missing!")
+    st.error("🚨 Supabase Credentials Missing! Check secrets.toml")
     st.stop()
 
 try:
@@ -42,20 +42,15 @@ def log_access(user_email):
 
 # --- STORAGE & DOCUMENTS ---
 def upload_file_to_supabase(file_obj, file_path):
-    """Uploads a file to the 'takeon_docs' bucket and returns the public URL."""
     try:
         bucket_name = "takeon_docs"
-        # Upload file (upsert=True overwrites if exists)
         supabase.storage.from_(bucket_name).upload(file_path, file_obj, {"content-type": file_obj.type, "upsert": "true"})
-        # Get Public URL
-        public_url = supabase.storage.from_(bucket_name).get_public_url(file_path)
-        return public_url
+        return supabase.storage.from_(bucket_name).get_public_url(file_path)
     except Exception as e:
         st.error(f"Upload failed: {e}")
         return None
 
 def update_document_url(table_name, row_id, url):
-    """Generic function to update the 'Document URL' column for any table."""
     try:
         supabase.table(table_name).update({"Document URL": url}).eq("id", row_id).execute()
         return "SUCCESS"
@@ -71,7 +66,7 @@ def get_data(table_name):
     except Exception as e:
         return pd.DataFrame()
 
-# --- CHECKLIST ---
+# --- CHECKLIST LOGIC ---
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
         records = edited_df.to_dict('records')
@@ -83,6 +78,36 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
                 supabase.table("Checklist").update(update_data).eq("id", row['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
+
+def initialize_checklist(complex_name):
+    """Copies items from Master table to Checklist table for a specific complex."""
+    try:
+        # 1. Get Master Items
+        master_res = supabase.table("Master").select("*").execute()
+        master_items = master_res.data
+        
+        if not master_items:
+            return "NO_MASTER_DATA"
+
+        # 2. Prepare new rows
+        new_rows = []
+        for item in master_items:
+            new_rows.append({
+                "Complex Name": complex_name,
+                "Task Name": item.get("Task Name"),
+                "Task Heading": item.get("Heading"),
+                "Responsibility": item.get("Responsibility"),
+                "Received": False,
+                "Delete": False
+            })
+        
+        # 3. Insert
+        if new_rows:
+            supabase.table("Checklist").insert(new_rows).execute()
+            return "SUCCESS"
+        return "NO_DATA"
+    except Exception as e:
+        return str(e)
 
 # --- PROJECTS ---
 def create_new_building(data):
