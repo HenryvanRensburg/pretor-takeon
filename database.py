@@ -26,7 +26,7 @@ except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
 
-# --- AUTH ---
+# --- AUTHENTICATION ---
 def login_user(email, password):
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
@@ -40,7 +40,7 @@ def log_access(user_email):
     except Exception as e:
         print(f"Logging failed: {e}")
 
-# --- STORAGE ---
+# --- STORAGE & DOCUMENTS ---
 def upload_file_to_supabase(file_obj, file_path):
     try:
         bucket_name = "takeon_docs"
@@ -64,7 +64,7 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CHECKLIST LOGIC (UPDATED) ---
+# --- CHECKLIST LOGIC ---
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
         records = edited_df.to_dict('records')
@@ -77,11 +77,10 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-def initialize_checklist(complex_name, building_type):
+def initialize_checklist(complex_name, building_type_code):
     """
-    Copies items from Master to Checklist.
-    Filters based on Building Type (BC vs HOA).
-    Carries over the 'Timing' (Immediate/Month-End).
+    Automatically populates the checklist from Master Schedule.
+    building_type_code expects: 'BC' or 'HOA'.
     """
     try:
         # 1. Get Master Items
@@ -94,38 +93,25 @@ def initialize_checklist(complex_name, building_type):
         new_rows = []
         for item in master_items:
             cat = item.get("Category", "Both")
-            # Logic: If item is 'Both', take it. If item matches building_type (BC or HOA), take it.
-            if cat == "Both" or cat == building_type:
+            # Logic: Include if category is 'Both' OR matches the specific type (BC/HOA)
+            if cat == "Both" or cat == building_type_code:
                 new_rows.append({
                     "Complex Name": complex_name,
                     "Task Name": item.get("Task Name"),
                     "Task Heading": item.get("Heading"),
                     "Responsibility": item.get("Responsibility"),
-                    "Timing": item.get("Timing", "Immediate"), # Default to Immediate if missing
+                    "Timing": item.get("Timing", "Immediate"), # Auto-carry timing
                     "Received": False,
                     "Delete": False
                 })
         
-        # 3. Insert
+        # 3. Insert Batch
         if new_rows:
             supabase.table("Checklist").insert(new_rows).execute()
             return "SUCCESS"
-        return "NO_DATA_MATCHING_TYPE"
+        return "NO_MATCHING_ITEMS"
     except Exception as e:
         return str(e)
-
-# --- MASTER (UPDATED) ---
-def add_master_item(task_name, category, responsibility, heading, timing):
-    try:
-        data = {
-            "Task Name": task_name, 
-            "Category": category, 
-            "Responsibility": responsibility, 
-            "Heading": heading,
-            "Timing": timing
-        }
-        supabase.table("Master").insert(data).execute()
-    except Exception as e: print(e)
 
 # --- PROJECTS ---
 def create_new_building(data):
@@ -205,7 +191,13 @@ def update_arrears_batch(edited_df):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- SETTINGS ---
+# --- MASTER & SETTINGS ---
+def add_master_item(task_name, category, responsibility, heading, timing):
+    try:
+        data = {"Task Name": task_name, "Category": category, "Responsibility": responsibility, "Heading": heading, "Timing": timing}
+        supabase.table("Master").insert(data).execute()
+    except Exception as e: print(e)
+
 def save_global_settings(settings_dict):
     try:
         supabase.table("Settings").delete().neq("id", 0).execute() 
