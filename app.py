@@ -129,10 +129,8 @@ def login_screen():
 
 # --- MAIN ---
 def main_app():
-    st.sidebar.title("👤 User Info")
-    st.sidebar.info(f"Logged in as:\n{st.session_state['user_email']}")
+    st.sidebar.info(f"User: {st.session_state['user_email']}")
     if st.sidebar.button("Log Out"): st.session_state.clear(); st.rerun()
-
     if os.path.exists("pretor_logo.png"): st.sidebar.image("pretor_logo.png", use_container_width=True)
     st.title("🏢 Pretor Take-On Manager")
     
@@ -177,14 +175,14 @@ def main_app():
             if st.form_submit_button("Save"): save_global_settings({"Wages": w, "SARS": s, "Municipal": m}); st.cache_data.clear(); st.success("Saved"); st.rerun()
 
     elif choice == "New Building":
-        st.subheader("New Building")
+        st.subheader("Onboard New Complex")
         with st.form("new"):
             n = st.text_input("Name"); t = st.selectbox("Type", ["Body Corporate", "HOA"])
             if st.form_submit_button("Create"):
                 if n: 
                     res = create_new_building({"Complex Name": n, "Type": t, "Date Doc Requested": str(datetime.today())})
                     if res == "SUCCESS":
-                        # AUTO-INIT
+                        # AUTO-INIT CHECKLIST ON CREATE
                         t_code = "BC" if t == "Body Corporate" else "HOA"
                         init_res = initialize_checklist(n, t_code)
                         st.cache_data.clear()
@@ -273,7 +271,7 @@ def main_app():
             an = c1.text_input("Agent Name", value=get_val("Agent Name"), key=f"an_{b_choice}")
             ae = c2.text_input("Agent Email", value=get_val("Agent Email"), key=f"ae_{b_choice}")
 
-            # --- HANDOVER STRATEGY (AUTO LOAD & SPLIT) ---
+            # --- HANDOVER STRATEGY ---
             st.markdown("#### 📋 Handover Strategy: Immediate Items")
             full_chk = get_data("Checklist")
             
@@ -286,13 +284,12 @@ def main_app():
             if agent_task_df.empty:
                 st.warning("⚠️ No checklist items found for this building.")
                 if st.button("📥 Load Standard Checklist from Master", key="init_chk"):
-                    res = initialize_checklist(b_choice, get_val("Type"))
+                    type_code = "BC" if get_val("Type") == "Body Corporate" else "HOA"
+                    res = initialize_checklist(b_choice, type_code)
                     if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
                     else: st.error(f"Failed: {res}")
             else:
-                # 3. AUTO SPLIT BASED ON TIMING
-                immediate_tasks = agent_task_df[agent_task_df['Timing'] == 'Immediate']
-                
+                # 3. AUTO SPLIT & EMAIL
                 if st.button("Generate Request PDF & Email"):
                     if ae and not validate_email(ae): st.error("Invalid Agent Email")
                     else:
@@ -300,7 +297,9 @@ def main_app():
                         pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"))
                         with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
                         
-                        imm_text = "\n".join([f"- {x}" for x in immediate_tasks['Task Name'].tolist()])
+                        # Get Immediate Items for Email Body
+                        imm_df = agent_task_df[agent_task_df['Timing'] == 'Immediate']
+                        imm_text = "\n".join([f"- {x}" for x in imm_df['Task Name'].tolist()])
                         email_body = f"Dear {an},\n\nWe confirm our appointment for {b_choice}.\n\nPlease provide the following URGENTLY:\n{imm_text}\n\nThe remaining items are required by the 10th.\n\nRegards, Pretor"
                         link = f'<a href="mailto:{ae}?subject=Handover&body={urllib.parse.quote(email_body)}" target="_blank">📧 Draft Email</a>'
                         st.markdown(link, unsafe_allow_html=True)
