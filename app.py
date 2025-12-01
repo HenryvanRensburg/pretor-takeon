@@ -59,7 +59,7 @@ class AgentRequestPDF(BasePDF):
     def add_item(self, text):
         self.set_font('Arial', '', 10); self.cell(10); self.multi_cell(0, 5, "- " + self.clean_text(text)); self.ln(1)
 
-def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date):
+def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_date, immediate_items_list):
     pdf = AgentRequestPDF()
     pdf.add_page()
     pdf.set_font('Arial', 'B', 14); pdf.cell(0, 10, 'Handover Request: Managing Agent Appointment', 0, 1, 'C'); pdf.ln(5)
@@ -67,9 +67,9 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
-    # AUTOMATIC SPLIT BASED ON DB 'Timing' COLUMN
-    df_immediate = checklist_df[checklist_df['Timing'] == 'Immediate']
-    df_month_end = checklist_df[checklist_df['Timing'] == 'Month-End']
+    # Split Dataframe
+    df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
+    df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
     
     pdf.section_header("SECTION A: REQUIRED IMMEDIATELY")
     pdf.set_font('Arial', 'I', 9); pdf.multi_cell(0, 5, "Please provide the following documents at your earliest convenience."); pdf.ln(2)
@@ -109,13 +109,53 @@ def create_comprehensive_pdf(complex_name, p_row, checklist_df, emp_df, arrears_
     for k,v in fields.items(): pdf.entry_row(k, p_row.get(v,''))
     pdf.ln(5)
     
-    pdf.section_title("2. Pending Items"); pdf.ln(2)
-    pending = checklist_df[(checklist_df['Received'].astype(str).str.lower() != 'true') & (checklist_df['Delete'] != True)]
-    if not pending.empty:
-        for _, r in pending.iterrows(): pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(r['Task Name'])} ({r.get('Timing','Unknown')})")
-    else: pdf.cell(0, 6, "No pending items.", 0, 1)
+    pdf.section_title("2. Items Received from Previous Agent"); pdf.ln(2)
+    if not checklist_df.empty:
+        agent_items = checklist_df[(checklist_df['Responsibility'].isin(['Previous Agent', 'Both'])) & (checklist_df['Received'].astype(str).str.lower() == 'true')]
+        if not agent_items.empty:
+            pdf.set_font("Arial", "", 9)
+            for _, row in agent_items.iterrows():
+                pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(row['Task Name'])} (Rec: {row.get('Date Received','')})")
+        else: pdf.cell(0, 6, "None received yet.", 0, 1)
+    else: pdf.cell(0, 6, "No data.", 0, 1)
+    pdf.ln(4)
+
+    pdf.section_title("3. Internal Actions Completed"); pdf.ln(2)
+    if not checklist_df.empty:
+        pretor_items = checklist_df[(checklist_df['Responsibility'].isin(['Pretor Group', 'Both'])) & (checklist_df['Received'].astype(str).str.lower() == 'true')]
+        if not pretor_items.empty:
+            pdf.set_font("Arial", "", 9)
+            for _, row in pretor_items.iterrows():
+                pdf.cell(5); pdf.multi_cell(0, 5, f"- {pdf.clean_text(row['Task Name'])}")
+        else: pdf.cell(0, 6, "None completed yet.", 0, 1)
+    else: pdf.cell(0, 6, "No data.", 0, 1)
+    pdf.ln(4)
+
+    pdf.section_title("4. Staff Loaded"); pdf.ln(2)
+    if not emp_df.empty:
+        c_emp = emp_df[emp_df['Complex Name'] == complex_name]
+        if not c_emp.empty:
+            pdf.set_font("Arial", "B", 8); pdf.cell(60, 6, "Name", 1); pdf.cell(50, 6, "Position", 1); pdf.cell(30, 6, "Salary", 1); pdf.ln()
+            pdf.set_font("Arial", "", 8)
+            for _, row in c_emp.iterrows():
+                pdf.cell(60, 6, pdf.clean_text(f"{row.get('Name','')} {row.get('Surname','')}"), 1)
+                pdf.cell(50, 6, pdf.clean_text(str(row.get('Position',''))), 1)
+                pdf.cell(30, 6, f"R{row.get('Salary',0)}", 1); pdf.ln()
+        else: pdf.cell(0, 6, "No staff.", 0, 1)
+    else: pdf.cell(0, 6, "No data.", 0, 1)
+    pdf.ln(4)
+
+    pdf.section_title("5. Department Handovers"); pdf.ln(2)
+    pdf.set_font("Arial", "", 9)
+    handovers = { "Wages": "Wages Sent Date", "Council": "Council Email Sent Date", "Debt": "Debt Collection Sent Date", "SARS": "SARS Sent Date" }
+    for k, v in handovers.items():
+        d = p_row.get(v)
+        st_txt = f"Done ({d})" if d and d != "None" else "Pending"
+        pdf.cell(40, 6, k+":", 0); pdf.cell(0, 6, st_txt, 0, 1)
     
-    temp_dir = tempfile.gettempdir(); filename = os.path.join(temp_dir, f"Report_{complex_name}.pdf"); pdf.output(filename); return filename
+    temp_dir = tempfile.gettempdir()
+    filename = os.path.join(temp_dir, f"Handover_Report_{complex_name}.pdf")
+    pdf.output(filename); return filename
 
 # --- LOGIN ---
 def login_screen():
@@ -194,10 +234,8 @@ def main_app():
             cat = c2.selectbox("Category", ["Both", "BC", "HOA"])
             resp = c3.selectbox("Responsibility", ["Previous Agent", "Pretor Group", "Both"])
             head = c4.selectbox("Heading", ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"])
-            # TIMING FIELD ADDED FOR NEW ITEMS
-            time = st.selectbox("Timing", ["Immediate", "Month-End"]) 
             if st.form_submit_button("Add"):
-                add_master_item(tn, cat, resp, head, time)
+                add_master_item(tn, cat, resp, head, "Immediate") # Default Immediate
                 st.cache_data.clear(); st.success("Added!"); st.rerun()
         st.dataframe(get_data("Master"))
 
@@ -214,14 +252,9 @@ def main_app():
             ins = st.text_input("Insurance", value=s_dict.get("Insurance", ""))
             acc = st.text_input("Accounts", value=s_dict.get("Accounts", ""))
             if st.form_submit_button("Save"):
-                # --- VALIDATION ---
                 errors = []
                 if wages and not validate_email(wages): errors.append("Invalid Wages Email")
                 if sars and not validate_email(sars): errors.append("Invalid SARS Email")
-                if muni and not validate_email(muni): errors.append("Invalid Municipal Email")
-                if debt and not validate_email(debt): errors.append("Invalid Debt Email")
-                if ins and not validate_email(ins): errors.append("Invalid Insurance Email")
-                if acc and not validate_email(acc): errors.append("Invalid Accounts Email")
                 
                 if errors:
                     for e in errors: st.error(e)
@@ -250,13 +283,11 @@ def main_app():
                 if name:
                     data = {"Complex Name": name, "Type": b_type, "Take On Date": str(tod), "No of Units": units, "TakeOn Name": tom, "Assigned Manager": pm, "Year End": ye, "Mgmt Fees": fees, "Building Code": bcode, "Date Doc Requested": str(datetime.today())}
                     res = create_new_building(data)
-                    st.cache_data.clear()
                     if res == "SUCCESS":
-                        # Auto-Init Checklist
+                        # Auto-Init
                         t_code = "BC" if b_type == "Body Corporate" else "HOA"
                         initialize_checklist(name, t_code)
-                        st.success("Created! Checklist loaded.")
-                        st.rerun()
+                        st.cache_data.clear(); st.success("Created!"); st.rerun()
                     elif res == "EXISTS": st.error("Exists already.")
                 else: st.error("Name required.")
 
@@ -289,7 +320,6 @@ def main_app():
             if sub_nav == "Overview":
                 st.subheader(f"Project Overview: {b_choice}")
                 
-                # --- MINI DASHBOARD ---
                 checklist = get_data("Checklist")
                 arrears = get_data("Arrears")
                 staff = get_data("Employees")
@@ -300,29 +330,24 @@ def main_app():
                 done_tasks = len(c_checklist[c_checklist['Received'].astype(str).str.lower() == 'true']) if not c_checklist.empty else 0
                 prog_val = done_tasks / total_tasks if total_tasks > 0 else 0
                 
-                c_arrears = pd.DataFrame()
-                debt_val = 0.0
+                # FIX: Force numeric conversion
+                c_arrears = pd.DataFrame(); debt_val = 0.0
                 if not arrears.empty and 'Complex Name' in arrears.columns:
                     c_arrears = arrears[arrears['Complex Name'] == b_choice]
                     if not c_arrears.empty and 'Outstanding Amount' in c_arrears.columns:
-                        numeric_amounts = pd.to_numeric(c_arrears['Outstanding Amount'], errors='coerce').fillna(0)
-                        debt_val = numeric_amounts.sum()
+                        debt_val = pd.to_numeric(c_arrears['Outstanding Amount'], errors='coerce').fillna(0).sum()
                 
                 c_staff = staff[staff['Complex Name'] == b_choice] if not staff.empty and 'Complex Name' in staff.columns else pd.DataFrame()
                 staff_count = len(c_staff)
-                
                 c_coun = council[council['Complex Name'] == b_choice] if not council.empty and 'Complex Name' in council.columns else pd.DataFrame()
                 coun_count = len(c_coun)
 
                 col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-                col_d1.metric("Checklist Progress", f"{int(prog_val*100)}%")
-                col_d1.progress(prog_val)
+                col_d1.metric("Checklist Progress", f"{int(prog_val*100)}%"); col_d1.progress(prog_val)
                 col_d2.metric("Total Arrears", f"R {debt_val:,.2f}")
                 col_d3.metric("Staff Loaded", staff_count)
                 col_d4.metric("Council Accounts", coun_count)
                 
-                tax_check = get_val("Tax Number")
-                if not tax_check or tax_check == 'None': st.warning("⚠️ Alert: Tax Number is missing!")
                 st.divider()
 
                 with st.form("project_overview_form"):
@@ -349,55 +374,47 @@ def main_app():
                     with c9: u_bk = smart_input("Bookkeeper", "Bookkeeper", c9); u_bk_e = smart_input("Bookkeeper Email", "Bookkeeper Email", c9)
                     st.markdown("---")
                     if st.form_submit_button("💾 Save Missing Details"):
-                        # --- VALIDATION ---
-                        errors = []
-                        if u_pm_e and not validate_email(u_pm_e): errors.append("Invalid PM Email")
-                        if u_client_e and not validate_email(u_client_e): errors.append("Invalid Client Email")
-                        if u_pa_e and not validate_email(u_pa_e): errors.append("Invalid PA Email")
-                        if u_bk_e and not validate_email(u_bk_e): errors.append("Invalid Bookkeeper Email")
-
-                        if errors:
-                            for e in errors: st.error(e)
-                        else:
-                            updates = {"Building Code": u_code, "Type": u_type, "No of Units": u_units, "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos, "Physical Address": u_addr, "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp, "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod, "Auditor": u_aud, "Last Audit": u_last_aud, "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e, "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom, "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e}
-                            update_building_details_batch(b_choice, updates); st.cache_data.clear(); st.success("Updated."); st.rerun()
+                        updates = {"Building Code": u_code, "Type": u_type, "No of Units": u_units, "SS Number": u_ss, "Erf Number": u_erf, "CSOS Number": u_csos, "Physical Address": u_addr, "Year End": u_ye, "Mgmt Fees": u_fees, "Expense Code": u_exp, "VAT Number": u_vat, "Tax Number": u_tax, "Take On Date": u_tod, "Auditor": u_aud, "Last Audit": u_last_aud, "Assigned Manager": u_pm, "Manager Email": u_pm_e, "Client Email": u_client_e, "Portfolio Assistant": u_pa, "Portfolio Assistant Email": u_pa_e, "TakeOn Name": u_tom, "Bookkeeper": u_bk, "Bookkeeper Email": u_bk_e}
+                        update_building_details_batch(b_choice, updates); st.cache_data.clear(); st.success("Updated."); st.rerun()
                 
                 st.markdown("### Previous Agent Request")
                 c1, c2 = st.columns(2)
                 an = c1.text_input("Agent Name", value=get_val("Agent Name"), key=f"an_{b_choice}")
                 ae = c2.text_input("Agent Email", value=get_val("Agent Email"), key=f"ae_{b_choice}")
 
-                # --- HANDOVER STRATEGY ---
                 st.markdown("#### 📋 Handover Strategy: Immediate Items")
-                
+                full_chk = get_data("Checklist")
                 agent_task_df = pd.DataFrame()
-                if not checklist.empty:
-                    checklist['Responsibility'] = checklist['Responsibility'].astype(str)
-                    # FILTER FOR AGENT OR BOTH
-                    mask_complex = checklist['Complex Name'] == b_choice
-                    mask_resp = checklist['Responsibility'].str.contains('Agent|Both', case=False, na=False)
-                    agent_task_df = checklist[mask_complex & mask_resp]
+                if not full_chk.empty:
+                    # ROBUST FILTER: Case insensitive match for 'Agent' or 'Both'
+                    mask_complex = full_chk['Complex Name'] == b_choice
+                    mask_resp = full_chk['Responsibility'].astype(str).str.contains('Agent|Both', case=False, na=False)
+                    agent_task_df = full_chk[mask_complex & mask_resp]
                 
                 if agent_task_df.empty:
-                    st.warning("⚠️ No checklist items found.")
-                    if st.button("🛠️ Fix/Reset Checklist Data", key="fix_data"):
+                    st.warning("⚠️ No checklist items found for this building.")
+                    if st.button("📥 Load Standard Checklist from Master", key="init_chk"):
                         type_code = "BC" if get_val("Type") == "Body Corporate" else "HOA"
                         res = initialize_checklist(b_choice, type_code)
-                        if res == "SUCCESS": st.success("Data Repaired!"); st.cache_data.clear(); st.rerun()
-                        else: st.error(f"Repair Failed: {res}")
+                        if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
+                        else: st.error(f"Failed: {res}")
                 else:
-                    # AUTOMATIC SPLIT
-                    immediate_tasks = agent_task_df[agent_task_df['Timing'] == 'Immediate']
+                    # SELECT IMMEDIATE ITEMS MANUALLY OR AUTO
+                    # This allows changing "Timing" on the fly for the PDF
+                    month_end_cats = ['Financial', 'Employee', 'City Council']
+                    default_immediate = agent_task_df[~agent_task_df['Task Heading'].isin(month_end_cats)]['Task Name'].tolist()
+                    all_options = agent_task_df['Task Name'].tolist()
+                    
+                    selected_immediate = st.multiselect("Items Required Immediately:", options=all_options, default=[x for x in default_immediate if x in all_options], key=f"imm_{b_choice}")
                     
                     if st.button("Generate Request PDF & Email"):
                         if ae and not validate_email(ae): st.error("Invalid Agent Email")
                         else:
                             update_project_agent_details(b_choice, an, ae)
-                            pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"))
+                            pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"), selected_immediate)
                             with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
                             
-                            # EMAIL
-                            imm_text = "\n".join([f"- {x}" for x in immediate_tasks['Task Name'].tolist()])
+                            imm_text = "\n".join([f"- {x}" for x in selected_immediate])
                             email_body = f"Dear {an},\n\nWe confirm our appointment for {b_choice}.\n\nPlease provide the following URGENTLY:\n{imm_text}\n\nThe remaining items are required by the 10th.\n\nRegards, Pretor"
                             link = f'<a href="mailto:{ae}?subject=Handover&body={urllib.parse.quote(email_body)}" target="_blank">📧 Draft Email</a>'
                             st.markdown(link, unsafe_allow_html=True)
@@ -418,8 +435,10 @@ def main_app():
                     st.markdown("#### 📝 Pending Actions")
                     t1, t2 = st.tabs(["① Previous Agent Pending", "② Internal Pending"])
                     sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
+                    
                     with t1:
                         if not df_pending.empty:
+                            # ROBUST FILTER
                             mask_agent = df_pending['Responsibility'].astype(str).str.contains('Agent|Both', case=False, na=False)
                             ag_pend = df_pending[mask_agent].copy()
                             if not ag_pend.empty:
@@ -453,19 +472,17 @@ def main_app():
                                     st.markdown(f'<a href="mailto:{agent_email}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Follow Up Email</a>', unsafe_allow_html=True)
                             else: st.info("No pending items.")
                         else:
-                             # COMPLETE LOGIC
+                             # AGENT COMPLETE
                              mask_agent_comp = c_items['Responsibility'].astype(str).str.contains('Agent|Both', case=False, na=False)
                              ag_comp = c_items[mask_agent_comp & (c_items['Received'] == True)]
                              if not ag_comp.empty:
                                  try: last_d = pd.to_datetime(ag_comp['Date Received'], errors='coerce').max().strftime('%Y-%m-%d')
                                  except: last_d = "Unknown"
                                  st.success(f"✅ All items received! Last: **{last_d}**")
-                                 
                                  st.divider()
                                  st.markdown("#### 🚀 Take-On Complete: Notify Client")
                                  comp_date = get_val("Client Completion Email Sent Date")
                                  rep_date = get_val("Client Report Generated Date")
-                                 
                                  st.markdown("**Step 1: Generate Handover Report**")
                                  if rep_date and rep_date != "None":
                                      st.success(f"✅ Generated: {rep_date}")
@@ -477,9 +494,7 @@ def main_app():
                                      if st.button("📄 Generate & Lock Report", key=f"gen_pdf_comp_{b_choice}"):
                                          emp_df, arr_df, cou_df = get_data("Employees"), get_data("Arrears"), get_data("Council")
                                          create_comprehensive_pdf(b_choice, p_row, c_items, emp_df, arr_df, cou_df)
-                                         update_email_status(b_choice, "Client Report Generated Date")
-                                         st.cache_data.clear(); st.rerun()
-
+                                         update_email_status(b_choice, "Client Report Generated Date"); st.cache_data.clear(); st.rerun()
                                  st.markdown("**Step 2: Email Client**")
                                  if comp_date and comp_date != "None":
                                      st.success(f"✅ Sent: {comp_date}")
@@ -495,8 +510,10 @@ def main_app():
                                          if st.button("Mark as Sent", key=f"mark_comp_{b_choice}"): update_email_status(b_choice, "Client Completion Email Sent Date"); st.cache_data.clear(); st.rerun()
                                      else: st.warning("No Client Email.")
                              else: st.info("No agent items.")
+
                     with t2:
                         if not df_pending.empty:
+                            # ROBUST FILTER INTERNAL
                             mask_internal = df_pending['Responsibility'].astype(str).str.contains('Pretor|Both', case=False, na=False)
                             int_pend = df_pending[mask_internal].copy()
                             if not int_pend.empty:
@@ -554,6 +571,7 @@ def main_app():
                         if doc_url:
                             update_document_url("Employees", row_id, doc_url)
                             st.success("Uploaded!")
+            
             st.divider(); st.markdown("#### ➕ Add New Employee")
             with st.form("add_s", clear_on_submit=True):
                 c1,c2 = st.columns(2); n=c1.text_input("Name"); s=c2.text_input("Surname")
