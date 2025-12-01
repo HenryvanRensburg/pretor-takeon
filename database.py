@@ -26,7 +26,7 @@ except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
 
-# --- AUTHENTICATION ---
+# --- AUTH ---
 def login_user(email, password):
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
@@ -47,7 +47,6 @@ def upload_file_to_supabase(file_obj, file_path):
         supabase.storage.from_(bucket_name).upload(file_path, file_obj, {"content-type": file_obj.type, "upsert": "true"})
         return supabase.storage.from_(bucket_name).get_public_url(file_path)
     except Exception as e:
-        st.error(f"Upload failed: {e}")
         return None
 
 def update_document_url(table_name, row_id, url):
@@ -56,7 +55,7 @@ def update_document_url(table_name, row_id, url):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- GENERIC FETCH ---
+# --- FETCH ---
 def get_data(table_name):
     try:
         response = supabase.table(table_name).select("*").execute()
@@ -64,91 +63,76 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CHECKLIST LOGIC (ROBUST MATCHING) ---
+# --- CHECKLIST LOGIC (SMART AUTO-LOAD) ---
 def find_val(row, targets, default=""):
-    """
-     aggressively tries to find a value in a dict row
-     checking exact keys, lowercase keys, and keys with underscores/spaces swapped
-    """
-    # 1. Check exact
-    for t in targets:
-        if t in row: 
-            return row[t] if row[t] is not None else default
-            
-    # 2. Check case-insensitive and sanitized
-    row_clean = {str(k).lower().strip().replace('_', ''): v for k, v in row.items()}
-    
+    """Finds value in row dictionary by checking multiple key variations."""
+    row_lower = {str(k).lower().strip().replace('_', ''): v for k, v in row.items()}
     for t in targets:
         t_clean = str(t).lower().strip().replace('_', '')
-        if t_clean in row_clean:
-            val = row_clean[t_clean]
+        if t_clean in row_lower:
+            val = row_lower[t_clean]
             return val if val is not None else default
-            
     return default
 
-def initialize_checklist(complex_name, building_type_code):
+def initialize_checklist(complex_name, building_type_full):
     """
-    Copies items from Master to Checklist.
-    Defaults to 'Both' if columns are missing to ensure visibility.
+    Copies from Master -> Checklist.
+    1. Clears old data for complex.
+    2. Maps 'Body Corporate' -> 'BC' logic.
+    3. Copies Responsibility exactly as found in Master.
     """
     try:
-        # 1. Delete existing items to ensure a clean reload
+        # 1. Delete existing (clean slate)
         supabase.table("Checklist").delete().eq("Complex Name", complex_name).execute()
         
-        # 2. Get Master Items
+        # 2. Get Master
         master_res = supabase.table("Master").select("*").execute()
         master_items = master_res.data
-        
         if not master_items: return "NO_MASTER_DATA"
+
+        # 3. Determine Type Code (BC / HOA)
+        # Simplify the input "Body Corporate" -> "bc", "HOA" -> "hoa"
+        b_type_norm = "bc" if "body" in str(building_type_full).lower() else "hoa"
 
         new_rows = []
         for item in master_items:
-            # --- AGGRESSIVE COLUMN MAPPING ---
-            
-            # Task Name
-            name = find_val(item, ["Task Name", "task_name", "taskname", "Task", "Item", "description"], "")
-            
-            # Category (BC / HOA / Both)
-            cat = find_val(item, ["Category", "category", "cat"], "Both")
-            
-            # Responsibility (Agent / Pretor / Both)
-            # IMPORTANT: Default to "Both" so it shows up everywhere if column is missing
-            resp = find_val(item, ["Responsibility", "responsibility", "resp", "Action By", "Who"], "Both")
-            
-            # Heading (Financial, Legal, etc)
-            head = find_val(item, ["Heading", "heading", "head", "Section"], "General")
-            
-            # Timing (Immediate / Month-End)
-            time = find_val(item, ["Timing", "timing", "time", "When"], "Immediate")
+            # Get values robustly
+            cat_ raw = find_val(item, ["Category", "category", "Cat"], "Both")
+            name = find_val(item, ["Task Name", "task_name", "Task"], "")
+            head = find_val(item, ["Heading", "heading", "Task Heading"], "General")
+            resp = find_val(item, ["Responsibility", "responsibility", "Resp"], "Both") # Default Both if missing
+            time = find_val(item, ["Timing", "timing", "Time"], "Immediate")
 
-            # --- FILTER LOGIC ---
-            b_type = str(building_type_code).lower().strip()
-            i_cat = str(cat).lower().strip()
-            
-            # Match if: Master says 'Both', or Master says nothing, or Master matches Building Type
-            is_match = False
-            if "both" in i_cat or i_cat == "" or i_cat == "none": 
-                is_match = True
-            elif b_type == "bc" and ("body" in i_cat or "bc" in i_cat): 
-                is_match = True
-            elif b_type == "hoa" and "hoa" in i_cat: 
-                is_match = True
+            # Normalize Master Category
+            cat_norm = str(cat_raw).lower().strip()
 
-            if is_match and name:
+            # Logic: 
+            # - If Master is 'Both', copy it.
+            # - If Master is 'BC' and building is BC, copy it.
+            # - If Master is 'HOA' and building is HOA, copy it.
+            should_copy = False
+            
+            if "both" in cat_norm or cat_norm == "":
+                should_copy = True
+            elif b_type_norm == "bc" and ("body" in cat_norm or "bc" in cat_norm):
+                should_copy = True
+            elif b_type_norm == "hoa" and "hoa" in cat_norm:
+                should_copy = True
+
+            if should_copy and name:
                 new_rows.append({
                     "Complex Name": complex_name,
                     "Task Name": name,
                     "Task Heading": head,
-                    "Responsibility": resp,
+                    "Responsibility": resp, # Copy exact string from Master
                     "Timing": time,
                     "Received": False,
                     "Delete": False
                 })
         
-        # 3. Insert
+        # 4. Insert
         if new_rows:
-            # Batch insert to prevent timeouts
-            chunk_size = 50
+            chunk_size = 100
             for i in range(0, len(new_rows), chunk_size):
                 batch = new_rows[i:i + chunk_size]
                 supabase.table("Checklist").insert(batch).execute()
@@ -189,7 +173,7 @@ def save_broker_details(c, n, e): return update_building_details_batch(c, {"Insu
 def update_email_status(c, col, v=None): return update_building_details_batch(c, {col: v if v else str(datetime.now().date())})
 def finalize_project_db(c): return update_building_details_batch(c, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
 
-# --- SUB-TABLES ---
+# --- SUB-TABLES (STANDARD) ---
 def add_employee(c, n, s, i, p, sal, pb, cb, tb):
     try: supabase.table("Employees").insert({"Complex Name": c, "Name": n, "Surname": s, "ID Number": i, "Position": p, "Salary": sal, "Payslip Received": pb, "Contract Received": cb, "Tax Ref Received": tb}).execute()
     except Exception as e: raise e
@@ -199,7 +183,6 @@ def update_employee_batch(df):
             if r.get('id'): supabase.table("Employees").update({k:v for k,v in r.items() if k!='id'}).eq("id", r['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
-
 def add_council_account(c, a, s, b):
     try: supabase.table("Council").insert({"Complex Name": c, "Account Number": a, "Service": s, "Balance": b}).execute()
     except Exception as e: print(e)
@@ -209,7 +192,6 @@ def update_council_batch(df):
             if r.get('id'): supabase.table("Council").update({k:v for k,v in r.items() if k!='id'}).eq("id", r['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
-
 def add_arrears_item(c, u, a, n, e, p):
     try: supabase.table("Arrears").insert({"Complex Name": c, "Unit Number": u, "Outstanding Amount": a, "Attorney Name": n, "Attorney Email": e, "Attorney Phone": p}).execute()
     except Exception as e: raise e
@@ -219,17 +201,14 @@ def update_arrears_batch(df):
             if r.get('id'): supabase.table("Arrears").update({k:v for k,v in r.items() if k!='id'}).eq("id", r['id']).execute()
         return "SUCCESS"
     except Exception as e: return str(e)
-
 def add_master_item(n, cat, resp, head, time):
     try: supabase.table("Master").insert({"Task Name": n, "Category": cat, "Responsibility": resp, "Heading": head, "Timing": time}).execute()
     except Exception as e: print(e)
-
 def save_global_settings(s):
     try:
         supabase.table("Settings").delete().neq("id", 0).execute()
         for k, v in s.items(): supabase.table("Settings").insert({"Department": k, "Email": v}).execute()
     except Exception as e: print(e)
-
 # --- PLACEHOLDERS ---
 def add_service_provider(n, t, c): pass 
 def add_trustee(c, n, e, p): pass 
