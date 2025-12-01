@@ -26,7 +26,7 @@ except Exception as e:
     st.error(f"Connection Error: {e}")
     st.stop()
 
-# --- AUTH ---
+# --- AUTHENTICATION ---
 def login_user(email, password):
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
@@ -38,7 +38,7 @@ def log_access(user_email):
     try:
         supabase.table("LoginLogs").insert({"user_email": user_email}).execute()
     except Exception as e:
-        print(f"Logging failed: {e}")
+        pass
 
 # --- STORAGE ---
 def upload_file_to_supabase(file_obj, file_path):
@@ -47,7 +47,6 @@ def upload_file_to_supabase(file_obj, file_path):
         supabase.storage.from_(bucket_name).upload(file_path, file_obj, {"content-type": file_obj.type, "upsert": "true"})
         return supabase.storage.from_(bucket_name).get_public_url(file_path)
     except Exception as e:
-        st.error(f"Upload failed: {e}")
         return None
 
 def update_document_url(table_name, row_id, url):
@@ -64,43 +63,63 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CHECKLIST LOGIC (ROBUST) ---
+# --- CHECKLIST LOGIC (FIXED) ---
 def find_val(row, targets, default=""):
-    """Helper to find value regardless of column casing"""
+    """Finds value in row dictionary by checking multiple key variations."""
+    # 1. Exact match
     for t in targets:
         if t in row: return row[t]
-    # Lowercase fallback
+    
+    # 2. Case-insensitive & stripped match
     row_lower = {k.lower().strip(): v for k, v in row.items()}
     for t in targets:
-        if t.lower().strip() in row_lower: return row_lower[t.lower().strip()]
+        t_clean = t.lower().strip()
+        if t_clean in row_lower: return row_lower[t_clean]
+    
     return default
 
 def initialize_checklist(complex_name, building_type_code):
-    """Deletes old items and reloads from Master."""
+    """
+    Copies items from Master to Checklist.
+    Logic:
+    1. Deletes existing items for this complex to prevent duplicates.
+    2. Reads ALL Master items.
+    3. Filters: If Category matches Building Type OR is 'Both' OR is Empty.
+    4. Inserts into Checklist.
+    """
     try:
-        # 1. Delete existing items to prevent duplicates/bad data
+        # 1. Cleanup old data
         supabase.table("Checklist").delete().eq("Complex Name", complex_name).execute()
         
-        # 2. Get Master Items
+        # 2. Get Master
         master_res = supabase.table("Master").select("*").execute()
         master_items = master_res.data
         if not master_items: return "NO_MASTER_DATA"
 
         new_rows = []
         for item in master_items:
-            # Map Columns safely
+            # ROBUST MAPPING
+            # Use wide net for keys to catch "responsibility", "Responsibility", etc.
             cat  = find_val(item, ["Category", "category", "Cat"], "Both")
-            name = find_val(item, ["Task Name", "task_name", "Task"], "")
+            name = find_val(item, ["Task Name", "task_name", "Task", "task"])
             head = find_val(item, ["Heading", "heading", "Task Heading"], "General")
-            resp = find_val(item, ["Responsibility", "responsibility", "Resp"], "Pretor Group")
-            time = find_val(item, ["Timing", "timing", "Time"], "Immediate") # Default to Immediate
+            resp = find_val(item, ["Responsibility", "responsibility", "Resp", "Action By"], "Both") # Default to Both if missing
+            time = find_val(item, ["Timing", "timing", "Time"], "Immediate")
 
-            # Filter Logic
-            b_type = building_type_code.lower().strip()
+            # Handle None values
+            if cat is None: cat = "Both"
+            if resp is None: resp = "Both"
+            
+            # FILTER LOGIC
+            b_type = building_type_code.lower().strip() # 'bc' or 'hoa'
             i_cat = str(cat).lower().strip()
             
+            # Include if:
+            # 1. Master item category is 'both'
+            # 2. Master item category is empty/null (assume applies to all)
+            # 3. Master item category matches the building type
             is_match = False
-            if "both" in i_cat: is_match = True
+            if "both" in i_cat or i_cat == "" or i_cat == "none": is_match = True
             elif b_type == "bc" and ("body" in i_cat or "bc" in i_cat): is_match = True
             elif b_type == "hoa" and "hoa" in i_cat: is_match = True
 
@@ -114,14 +133,20 @@ def initialize_checklist(complex_name, building_type_code):
                     "Received": False,
                     "Delete": False
                 })
-        
+
         # 3. Insert
         if new_rows:
-            supabase.table("Checklist").insert(new_rows).execute()
+            # Split into chunks of 100 to avoid timeouts
+            chunk_size = 100
+            for i in range(0, len(new_rows), chunk_size):
+                batch = new_rows[i:i + chunk_size]
+                supabase.table("Checklist").insert(batch).execute()
             return "SUCCESS"
+        
         return "NO_MATCHING_ITEMS"
+
     except Exception as e:
-        return str(e)
+        return f"Error: {str(e)}"
 
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
@@ -135,7 +160,7 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- PROJECTS ---
+# --- OTHER CRUD ---
 def create_new_building(data):
     try:
         existing = supabase.table("Projects").select("*").eq("Complex Name", data["Complex Name"]).execute()
@@ -153,7 +178,7 @@ def save_broker_details(c, n, e): return update_building_details_batch(c, {"Insu
 def update_email_status(c, col, v=None): return update_building_details_batch(c, {col: v if v else str(datetime.now().date())})
 def finalize_project_db(c): return update_building_details_batch(c, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
 
-# --- SUB TABLES ---
+# --- SUB-TABLES ---
 def add_employee(c, n, s, i, p, sal, pb, cb, tb):
     try: supabase.table("Employees").insert({"Complex Name": c, "Name": n, "Surname": s, "ID Number": i, "Position": p, "Salary": sal, "Payslip Received": pb, "Contract Received": cb, "Tax Ref Received": tb}).execute()
     except Exception as e: raise e
