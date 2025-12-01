@@ -8,7 +8,7 @@ import re
 from fpdf import FPDF
 from streamlit_option_menu import option_menu
 
-# --- DATABASE IMPORTS (Vertical to prevent Syntax Errors) ---
+# --- DATABASE IMPORTS ---
 from database import (
     get_data, 
     add_master_item, 
@@ -89,8 +89,7 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
-    # Split Dataframe based on user selection
-    # Items IN the list are Immediate. Items NOT in the list are Month-End.
+    # Split Dataframe
     df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
     df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
     
@@ -206,16 +205,14 @@ def main_app():
                 if n: 
                     res = create_new_building({"Complex Name": n, "Type": t, "Date Doc Requested": str(datetime.today())})
                     if res == "SUCCESS":
-                        # AUTO-INIT
                         t_code = "BC" if t == "Body Corporate" else "HOA"
-                        initialize_checklist(n, t_code)
+                        init_res = initialize_checklist(n, t_code)
                         st.cache_data.clear(); st.success(f"Project '{n}' created & checklist loaded!"); st.rerun()
                     else: st.error("Exists.")
 
     elif choice == "Manage Buildings":
         projs = get_data("Projects")
         if projs.empty: st.warning("No projects."); st.stop()
-        
         b_choice = st.selectbox("Select Complex", projs['Complex Name'])
         p_row = projs[projs['Complex Name'] == b_choice].iloc[0]
         def get_val(c): return str(p_row.get(c, ''))
@@ -233,15 +230,12 @@ def main_app():
                 if st.form_submit_button("Save"): update_building_details_batch(b_choice, {"Assigned Manager": mgr, "Manager Email": mail}); st.cache_data.clear(); st.success("Saved"); st.rerun()
             st.markdown("### Previous Agent Request")
             c1, c2 = st.columns(2); an = c1.text_input("Agent Name", value=get_val("Agent Name"), key=f"an_{b_choice}"); ae = c2.text_input("Agent Email", value=get_val("Agent Email"), key=f"ae_{b_choice}")
-
-            # --- HANDOVER STRATEGY ---
-            st.markdown("#### 📋 Handover Strategy: Immediate Items")
-            full_chk = get_data("Checklist")
             
+            full_chk = get_data("Checklist")
             agent_task_df = pd.DataFrame()
             if not full_chk.empty:
+                # ROBUST FILTER: Case insensitive match for 'Agent' or 'Both'
                 full_chk['Responsibility'] = full_chk['Responsibility'].astype(str)
-                # ROBUST CHECK FOR AGENT
                 mask_complex = full_chk['Complex Name'] == b_choice
                 mask_resp = full_chk['Responsibility'].str.contains('Agent|Both', case=False, na=False)
                 agent_task_df = full_chk[mask_complex & mask_resp]
@@ -254,27 +248,17 @@ def main_app():
                     if res == "SUCCESS": st.success("Loaded! Reloading..."); st.cache_data.clear(); st.rerun()
                     else: st.error(f"Failed: {res}")
             else:
-                # LOGIC: Select items that are immediate. 
-                # Pre-select items that are already marked 'Immediate' in the database (if column exists), 
-                # otherwise default to everything except Month-End categories.
+                # SHOW SELECTION
                 month_end_cats = ['Financial', 'Employee', 'City Council']
-                
-                # Default immediate items are those NOT in month-end categories
                 default_immediate = agent_task_df[~agent_task_df['Task Heading'].isin(month_end_cats)]['Task Name'].tolist()
                 all_options = agent_task_df['Task Name'].tolist()
                 
-                selected_immediate = st.multiselect(
-                    "Items Required Immediately:",
-                    options=all_options,
-                    default=[x for x in default_immediate if x in all_options],
-                    key=f"imm_{b_choice}"
-                )
+                selected_immediate = st.multiselect("Items Required Immediately:", options=all_options, default=[x for x in default_immediate if x in all_options], key=f"imm_{b_choice}")
                 
                 if st.button("Generate Request PDF & Email"):
                     if ae and not validate_email(ae): st.error("Invalid Agent Email")
                     else:
                         update_project_agent_details(b_choice, an, ae)
-                        # PASS SELECTED LIST to PDF generator
                         pdf = generate_appointment_pdf(b_choice, agent_task_df, an, get_val("Take On Date"), selected_immediate)
                         with open(pdf, "rb") as f: st.download_button("Download PDF", f, file_name=pdf)
                         
@@ -301,14 +285,12 @@ def main_app():
                 sections = ["Take-On", "Financial", "Legal", "Statutory Compliance", "Insurance", "City Council", "Building Compliance", "Employee", "General"]
                 with t1:
                     if not df_pending.empty:
-                        # ROBUST FILTER FOR AGENT
                         mask_agent = df_pending['Responsibility'].astype(str).str.contains('Agent|Both', case=False, na=False)
                         ag_pend = df_pending[mask_agent].copy()
                         if not ag_pend.empty:
                             ag_pend['Sort'] = ag_pend['Task Heading'].apply(lambda x: sections.index(x) if x in sections else 99)
                             ag_pend = ag_pend.sort_values(by=['Sort', 'Task Name'])
                             
-                            # --- DOC UPLOAD ---
                             st.markdown("##### 📎 Attach Document (Optional)")
                             item_names = ag_pend['Task Name'].tolist()
                             selected_item = st.selectbox("Select checklist item to attach file", ["None"] + item_names, key=f"sel_up_{b_choice}")
