@@ -38,7 +38,7 @@ def log_access(user_email):
     try:
         supabase.table("LoginLogs").insert({"user_email": user_email}).execute()
     except Exception as e:
-        pass
+        print(f"Logging failed: {e}")
 
 # --- STORAGE ---
 def upload_file_to_supabase(file_obj, file_path):
@@ -66,58 +66,50 @@ def get_data(table_name):
 # --- CHECKLIST LOGIC (FIXED) ---
 def find_val(row, targets, default=""):
     """Finds value in row dictionary by checking multiple key variations."""
-    # 1. Exact match
+    # 1. Check Exact Matches
     for t in targets:
         if t in row: return row[t]
     
-    # 2. Case-insensitive & stripped match
-    row_lower = {k.lower().strip(): v for k, v in row.items()}
+    # 2. Check Case-Insensitive & Cleaned Matches
+    row_clean = {k.lower().strip().replace('_', ' '): v for k, v in row.items()}
+    
     for t in targets:
-        t_clean = t.lower().strip()
-        if t_clean in row_lower: return row_lower[t_clean]
+        t_clean = t.lower().strip().replace('_', ' ')
+        if t_clean in row_clean: return row_clean[t_clean]
     
     return default
 
 def initialize_checklist(complex_name, building_type_code):
     """
-    Copies items from Master to Checklist.
-    Logic:
-    1. Deletes existing items for this complex to prevent duplicates.
-    2. Reads ALL Master items.
-    3. Filters: If Category matches Building Type OR is 'Both' OR is Empty.
-    4. Inserts into Checklist.
+    Copies from Master to Checklist.
+    FIX: Properly maps Responsibility column.
     """
     try:
-        # 1. Cleanup old data
+        # 1. Delete existing items
         supabase.table("Checklist").delete().eq("Complex Name", complex_name).execute()
         
-        # 2. Get Master
+        # 2. Get Master Items
         master_res = supabase.table("Master").select("*").execute()
         master_items = master_res.data
         if not master_items: return "NO_MASTER_DATA"
 
         new_rows = []
         for item in master_items:
-            # ROBUST MAPPING
-            # Use wide net for keys to catch "responsibility", "Responsibility", etc.
+            # MAPPING KEYS (Expanded List)
             cat  = find_val(item, ["Category", "category", "Cat"], "Both")
-            name = find_val(item, ["Task Name", "task_name", "Task", "task"])
+            name = find_val(item, ["Task Name", "task_name", "Task", "Item"], "")
             head = find_val(item, ["Heading", "heading", "Task Heading"], "General")
-            resp = find_val(item, ["Responsibility", "responsibility", "Resp", "Action By"], "Both") # Default to Both if missing
+            
+            # CRITICAL FIX: RESPONSIBILITY MAPPING
+            # Look for 'Responsibility', 'responsibility', 'Resp', 'Action By', 'Agent'
+            resp = find_val(item, ["Responsibility", "responsibility", "Resp", "Action By", "Action"], "Pretor Group") 
+            
             time = find_val(item, ["Timing", "timing", "Time"], "Immediate")
 
-            # Handle None values
-            if cat is None: cat = "Both"
-            if resp is None: resp = "Both"
-            
-            # FILTER LOGIC
-            b_type = building_type_code.lower().strip() # 'bc' or 'hoa'
+            # Filter Logic
+            b_type = building_type_code.lower().strip()
             i_cat = str(cat).lower().strip()
             
-            # Include if:
-            # 1. Master item category is 'both'
-            # 2. Master item category is empty/null (assume applies to all)
-            # 3. Master item category matches the building type
             is_match = False
             if "both" in i_cat or i_cat == "" or i_cat == "none": is_match = True
             elif b_type == "bc" and ("body" in i_cat or "bc" in i_cat): is_match = True
@@ -128,21 +120,19 @@ def initialize_checklist(complex_name, building_type_code):
                     "Complex Name": complex_name,
                     "Task Name": name,
                     "Task Heading": head,
-                    "Responsibility": resp,
+                    "Responsibility": resp, # This should now correctly grab from Master
                     "Timing": time,
                     "Received": False,
                     "Delete": False
                 })
-
+        
         # 3. Insert
         if new_rows:
-            # Split into chunks of 100 to avoid timeouts
             chunk_size = 100
             for i in range(0, len(new_rows), chunk_size):
                 batch = new_rows[i:i + chunk_size]
                 supabase.table("Checklist").insert(batch).execute()
             return "SUCCESS"
-        
         return "NO_MATCHING_ITEMS"
 
     except Exception as e:
