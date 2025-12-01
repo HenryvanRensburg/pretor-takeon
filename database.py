@@ -64,42 +64,39 @@ def get_data(table_name):
         return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e: return pd.DataFrame()
 
-# --- CRITICAL FIX: COLUMN MAPPER ---
+# --- CHECKLIST LOGIC (ROBUST) ---
 def find_val(row, targets, default=""):
-    """Finds value in row dictionary by checking multiple key variations."""
-    # 1. Exact match
+    """Helper to find value regardless of column casing"""
     for t in targets:
         if t in row: return row[t]
-    
-    # 2. Lowercase match
+    # Lowercase fallback
     row_lower = {k.lower().strip(): v for k, v in row.items()}
     for t in targets:
         if t.lower().strip() in row_lower: return row_lower[t.lower().strip()]
-    
     return default
 
 def initialize_checklist(complex_name, building_type_code):
-    """
-    Copies from Master to Checklist with robust column mapping.
-    """
+    """Deletes old items and reloads from Master."""
     try:
-        # 1. Get Master
+        # 1. Delete existing items to prevent duplicates/bad data
+        supabase.table("Checklist").delete().eq("Complex Name", complex_name).execute()
+        
+        # 2. Get Master Items
         master_res = supabase.table("Master").select("*").execute()
         master_items = master_res.data
         if not master_items: return "NO_MASTER_DATA"
 
         new_rows = []
         for item in master_items:
-            # ROBUST MAPPING
-            # Maps Database Columns -> To Variables
+            # Map Columns safely
             cat  = find_val(item, ["Category", "category", "Cat"], "Both")
-            name = find_val(item, ["Task Name", "task_name", "Task", "task"])
-            head = find_val(item, ["Heading", "heading", "Task Heading", "task_heading"])
-            resp = find_val(item, ["Responsibility", "responsibility", "Resp"])
-            time = find_val(item, ["Timing", "timing", "Time"], "Immediate")
+            name = find_val(item, ["Task Name", "task_name", "Task"], "")
+            head = find_val(item, ["Heading", "heading", "Task Heading"], "General")
+            resp = find_val(item, ["Responsibility", "responsibility", "Resp"], "Pretor Group")
+            time = find_val(item, ["Timing", "timing", "Time"], "Immediate") # Default to Immediate
 
             # Filter Logic
-            b_type = building_type_code.lower().strip() # bc or hoa
+            b_type = building_type_code.lower().strip()
             i_cat = str(cat).lower().strip()
             
             is_match = False
@@ -111,21 +108,20 @@ def initialize_checklist(complex_name, building_type_code):
                 new_rows.append({
                     "Complex Name": complex_name,
                     "Task Name": name,
-                    "Task Heading": head if head else "General", # Default to General if missing
-                    "Responsibility": resp if resp else "Pretor Group", # Default to Pretor if missing
+                    "Task Heading": head,
+                    "Responsibility": resp,
                     "Timing": time,
                     "Received": False,
                     "Delete": False
                 })
-
-        # 2. Insert
+        
+        # 3. Insert
         if new_rows:
             supabase.table("Checklist").insert(new_rows).execute()
             return "SUCCESS"
         return "NO_MATCHING_ITEMS"
-
     except Exception as e:
-        return f"Error: {str(e)}"
+        return str(e)
 
 def save_checklist_batch(complex_name, edited_df, current_user_email):
     try:
@@ -139,7 +135,7 @@ def save_checklist_batch(complex_name, edited_df, current_user_email):
         return "SUCCESS"
     except Exception as e: return str(e)
 
-# --- OTHER CRUD ---
+# --- PROJECTS ---
 def create_new_building(data):
     try:
         existing = supabase.table("Projects").select("*").eq("Complex Name", data["Complex Name"]).execute()
@@ -157,7 +153,7 @@ def save_broker_details(c, n, e): return update_building_details_batch(c, {"Insu
 def update_email_status(c, col, v=None): return update_building_details_batch(c, {col: v if v else str(datetime.now().date())})
 def finalize_project_db(c): return update_building_details_batch(c, {"Status": "Finalized", "Finalized Date": str(datetime.now().date())})
 
-# --- SUB-TABLES ---
+# --- SUB TABLES ---
 def add_employee(c, n, s, i, p, sal, pb, cb, tb):
     try: supabase.table("Employees").insert({"Complex Name": c, "Name": n, "Surname": s, "ID Number": i, "Position": p, "Salary": sal, "Payslip Received": pb, "Contract Received": cb, "Tax Ref Received": tb}).execute()
     except Exception as e: raise e
