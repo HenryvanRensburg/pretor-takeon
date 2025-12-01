@@ -8,16 +8,34 @@ import re
 from fpdf import FPDF
 from streamlit_option_menu import option_menu
 
-# --- DATABASE IMPORTS ---
+# --- DATABASE IMPORTS (Vertical Layout for Stability) ---
 from database import (
-    get_data, add_master_item, add_service_provider, add_employee, 
-    add_arrears_item, add_council_account, add_trustee, delete_record_by_match, 
-    save_global_settings, update_building_details_batch, create_new_building, 
-    update_project_agent_details, save_checklist_batch, finalize_project_db, 
-    save_broker_details, update_email_status, update_service_provider_date, 
-    update_wages_status, update_employee_batch, update_council_batch, 
-    update_arrears_batch, login_user, log_access, upload_file_to_supabase, 
-    update_document_url, initialize_checklist
+    get_data, 
+    add_master_item, 
+    add_service_provider, 
+    add_employee, 
+    add_arrears_item, 
+    add_council_account, 
+    add_trustee, 
+    delete_record_by_match, 
+    save_global_settings, 
+    update_building_details_batch, 
+    create_new_building, 
+    update_project_agent_details, 
+    save_checklist_batch, 
+    finalize_project_db, 
+    save_broker_details, 
+    update_email_status, 
+    update_service_provider_date, 
+    update_wages_status, 
+    update_employee_batch, 
+    update_council_batch, 
+    update_arrears_batch, 
+    login_user, 
+    log_access,
+    upload_file_to_supabase, 
+    update_document_url, 
+    initialize_checklist
 )
 
 from pdf_generator import generate_weekly_report_pdf
@@ -136,9 +154,11 @@ def main_app():
     st.sidebar.title("👤 User Info")
     st.sidebar.info(f"Logged in as:\n{st.session_state['user_email']}")
     if st.sidebar.button("Log Out"): st.session_state.clear(); st.rerun()
-    if os.path.exists("pretor_logo.png"): st.sidebar.image("pretor_logo.png", use_container_width=True)
-    st.title("🏢 Pretor Take-On Manager")
-    
+
+    if os.path.exists("pretor_logo.png"):
+        st.sidebar.image("pretor_logo.png", use_container_width=True)
+    st.title("🏢 Pretor Group: Take-On Manager")
+
     menu = ["Dashboard", "Master Schedule", "New Building", "Manage Buildings", "Global Settings"]
     choice = st.sidebar.selectbox("Menu", menu)
 
@@ -162,7 +182,7 @@ def main_app():
                         with st.expander(f"🔥 {nm} ({len(tasks)} Pending)"):
                             for _, t in tasks.iterrows(): st.write(f"- {t['Task Name']}")
             else: st.info("No projects assigned to you.")
-        else: st.info("No projects.")
+        else: st.info("No projects found.")
 
     elif choice == "Master Schedule":
         st.subheader("Master Checklist"); df = get_data("Master"); st.dataframe(df)
@@ -306,7 +326,6 @@ def main_app():
                                 st.markdown(f'<a href="mailto:{agent_email}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Follow Up Email</a>', unsafe_allow_html=True)
                         else: st.info("No pending items.")
                     else:
-                            # AGENT COMPLETE
                             mask_agent_comp = c_items['Responsibility'].astype(str).str.contains('Agent|Both', case=False, na=False)
                             ag_comp = c_items[mask_agent_comp & (c_items['Received'] == True)]
                             if not ag_comp.empty:
