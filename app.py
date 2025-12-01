@@ -10,32 +10,14 @@ from streamlit_option_menu import option_menu
 
 # --- DATABASE IMPORTS ---
 from database import (
-    get_data, 
-    add_master_item, 
-    add_service_provider, 
-    add_employee, 
-    add_arrears_item, 
-    add_council_account, 
-    add_trustee, 
-    delete_record_by_match, 
-    save_global_settings, 
-    update_building_details_batch, 
-    create_new_building, 
-    update_project_agent_details, 
-    save_checklist_batch, 
-    finalize_project_db, 
-    save_broker_details, 
-    update_email_status, 
-    update_service_provider_date, 
-    update_wages_status, 
-    update_employee_batch, 
-    update_council_batch, 
-    update_arrears_batch, 
-    login_user, 
-    log_access,
-    upload_file_to_supabase, 
-    update_document_url, 
-    initialize_checklist
+    get_data, add_master_item, add_service_provider, add_employee, 
+    add_arrears_item, add_council_account, add_trustee, delete_record_by_match, 
+    save_global_settings, update_building_details_batch, create_new_building, 
+    update_project_agent_details, save_checklist_batch, finalize_project_db, 
+    save_broker_details, update_email_status, update_service_provider_date, 
+    update_wages_status, update_employee_batch, update_council_batch, 
+    update_arrears_batch, login_user, log_access, upload_file_to_supabase, 
+    update_document_url, initialize_checklist
 )
 
 from pdf_generator import generate_weekly_report_pdf
@@ -89,8 +71,7 @@ def generate_appointment_pdf(complex_name, checklist_df, agent_name, take_on_dat
     intro = f"Dear {agent_name},\n\nWe confirm that Pretor Group has been appointed as the managing agents for {complex_name}, effective {take_on_date}.\n\nTo ensure a smooth transition, we require the following documentation. We have separated this request into items required immediately and items required at month-end closing."
     pdf.multi_cell(0, 5, pdf.clean_text(intro)); pdf.ln(5)
     
-    # Filter Dataframe
-    # Items IN the list are Immediate. Items NOT in the list are Month-End.
+    # Split Dataframe
     df_immediate = checklist_df[checklist_df['Task Name'].isin(immediate_items_list)]
     df_month_end = checklist_df[~checklist_df['Task Name'].isin(immediate_items_list)]
     
@@ -325,6 +306,7 @@ def main_app():
                                 st.markdown(f'<a href="mailto:{agent_email}?subject={sub}&body={urllib.parse.quote(bod)}" target="_blank" style="background-color:#FF4B4B;color:white;padding:8px;border-radius:5px;text-decoration:none;">📧 Follow Up Email</a>', unsafe_allow_html=True)
                         else: st.info("No pending items.")
                     else:
+                            # AGENT COMPLETE
                             mask_agent_comp = c_items['Responsibility'].astype(str).str.contains('Agent|Both', case=False, na=False)
                             ag_comp = c_items[mask_agent_comp & (c_items['Received'] == True)]
                             if not ag_comp.empty:
